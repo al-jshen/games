@@ -7,6 +7,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
   const [board, setBoardModule] = useState<BoardModule | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const Board = board?.default ?? null;
+  const GameSidebar = board?.Sidebar ?? null;
 
   useEffect(() => {
     if (!match.gameId) return;
@@ -67,6 +68,16 @@ export function Room({ onLeave }: { onLeave: () => void }) {
               Back to lobby
             </button>
           </section>
+        )}
+
+        {GameSidebar && (
+          <GameSidebar
+            view={match.view}
+            seat={match.seat}
+            actors={match.actors}
+            pending={match.pending}
+            submit={(action) => client.submit(action)}
+          />
         )}
 
         <MoveLog describe={board?.describeEffect} />

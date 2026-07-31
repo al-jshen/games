@@ -98,7 +98,15 @@ Add the workspace to the root `package.json` `workspaces` array and to the `type
 
 ```tsx
 export default function MyBoard({ view, seat, actors, submit, pending }: BoardProps) { … }
+
+// Optional extras the shell will pick up if you export them:
+export function Sidebar(props: BoardProps) { … }         // panel in the app sidebar
+export function describeEffect(effect): string { … }      // move-log wording in your own vocabulary
 ```
+
+`Sidebar` is worth knowing about. Anything with a *variable* height belongs there rather than in the
+board column — Splendor Duel's turn guide is ~150px taller on your turn than while waiting, and while
+it lived above the board that swing resized every card on every move.
 
 Drive affordances from `legalActionsFromView` so the UI cannot offer a move the server would refuse,
 and cannot drift when the rules change.
@@ -145,3 +153,9 @@ Two UI traps worth knowing, because neither is obvious:
   visible, so adding it replaces `min-height: auto` with zero and the element you were protecting
   silently shrinks and clips its contents. Put the clip on an ancestor instead, and let a genuinely
   discretionary element (a help panel, a log) be the thing that shrinks.
+- Sizing that depends on both available width and height is easier to *measure* than to express. See
+  `metrics.ts`: the container's height comes from flex (`flex: 1 1 0`), so it does not depend on its
+  contents, which makes measuring the box and sizing the contents to fit non-circular. Reaching for
+  `height: 100%` plus `aspect-ratio` instead is circular inside flex — the parent's intrinsic width
+  resolves before the row height is known, so it collapses. And keep gap values in *one* place: a
+  constant in the arithmetic and a `clamp()` in the stylesheet disagreed by a pixel and clipped a row.

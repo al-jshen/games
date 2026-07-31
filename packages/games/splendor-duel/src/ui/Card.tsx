@@ -219,63 +219,116 @@ export function CardView({
       <rect x={1} y={1} width={102} height={149} rx={8} fill={LEVEL_TINT[def.level] ?? '#333'} stroke="rgba(0,0,0,0.5)" />
       <rect x={1} y={1} width={102} height={149} rx={8} fill="url(#cardSheen)" opacity={0.35} />
 
-      {/* Prestige, top-left. */}
-      {def.points > 0 && (
-        <text x={10} y={22} fontSize={20} fontWeight={800} fill="#f4e6c0">
+      {/*
+        There is no artwork to leave room for, so the attributes get the whole face. Everything below
+        is deliberately far larger than the printed card's proportions: at 60-110px wide, which is
+        where these actually render, a faithful layout leaves a big empty middle and numbers too
+        small to read.
+      */}
+
+      {/*
+        Royals get their own layout. They carry only prestige and one ability -- no cost, no bonus, no
+        crowns -- so laying them out like a jewel card wastes most of the face, and they are the
+        smallest cards on the board. Filling it makes them legible without needing more pixels.
+      */}
+      {def.kind === 'royal' ? (
+        <g>
+          <text x={52} y={62} fontSize={54} fontWeight={800} textAnchor="middle" fill="#f6ebca">
+            {def.points}
+          </text>
+          <text x={52} y={80} fontSize={12} textAnchor="middle" fill="rgba(255,255,255,0.5)">
+            PRESTIGE
+          </text>
+          {def.abilities.length > 0 ? (
+            <g transform="translate(52 116)">
+              <circle r={24} fill="rgba(0,0,0,0.34)" stroke="rgba(255,255,255,0.32)" strokeWidth={1.4} />
+              <text textAnchor="middle" dominantBaseline="central" fontSize={28} fill="#f4ecd6">
+                {ABILITY_GLYPH[def.abilities[0] as string] ?? '•'}
+              </text>
+            </g>
+          ) : (
+            <text x={52} y={122} fontSize={13} textAnchor="middle" fill="#cdbfa0">
+              no ability
+            </text>
+          )}
+        </g>
+      ) : null}
+
+      {/* Prestige: the largest thing on the card. */}
+      {def.kind !== 'royal' && def.points > 0 && (
+        <text x={9} y={45} fontSize={44} fontWeight={800} fill="#f6ebca">
           {def.points}
         </text>
       )}
 
-      {/* Crowns, top-centre. */}
-      {def.crowns > 0 && (
-        <g>
-          {Array.from({ length: def.crowns }, (_, i) => (
-            <Crown key={i} size={14} x={44 + i * 13 - (def.crowns - 1) * 6.5} y={15} />
-          ))}
-        </g>
-      )}
-
-      {/* Bonus, top-right. A wild card shows a diamond until it is assigned a colour. */}
-      <g transform="translate(88 17)">
-        {def.wild && !bonusColor ? (
-          <g>
-            <rect x={-9} y={-9} width={18} height={18} rx={4} transform="rotate(45)" fill="#8f86a8" stroke="#5d5673" />
-            <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={800} fill="#fff">
+      {/* Bonus, top-right. Two gems for a double bonus, rather than a small "2" to squint at. */}
+      <g>
+        {def.kind === 'royal' ? null : def.wild && !bonusColor ? (
+          <g transform="translate(76 30)">
+            <rect x={-15} y={-15} width={30} height={30} rx={6} transform="rotate(45)" fill="#9a91b4" stroke="#5d5673" strokeWidth={1.2} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={20} fontWeight={800} fill="#fff">
               ?
             </text>
           </g>
         ) : bonusColor ? (
-          <Gem color={bonusColor} size={22} label={def.bonusCount > 1 ? String(def.bonusCount) : undefined} />
+          def.bonusCount > 1 ? (
+            <g>
+              <Gem color={bonusColor} size={30} x={61} y={30} />
+              <Gem color={bonusColor} size={30} x={85} y={30} />
+            </g>
+          ) : (
+            <Gem color={bonusColor} size={38} x={78} y={30} />
+          )
         ) : null}
       </g>
 
-      {/* Abilities, centre. */}
+      {/* Crowns, under the prestige number. */}
+      {def.kind !== 'royal' && def.crowns > 0 && (
+        <g>
+          {Array.from({ length: def.crowns }, (_, i) => (
+            <Crown key={i} size={24} x={16 + i * 22} y={68} />
+          ))}
+        </g>
+      )}
+
+      {/* Abilities, centre. Big enough to identify at a glance. */}
       <g>
-        {def.abilities
-          .filter((a) => a !== 'wildBonus' || !bonusColor)
-          .map((ability, i, all) => (
-            <g key={ability} transform={`translate(52 ${72 + i * 20 - (all.length - 1) * 10})`}>
-              <circle r={11} fill="rgba(0,0,0,0.28)" stroke="rgba(255,255,255,0.22)" />
-              <text textAnchor="middle" dominantBaseline="central" fontSize={13} fill="#f0e7d0">
+        {(() => {
+          if (def.kind === 'royal') return null;
+          const shown = def.abilities.filter((a) => a !== 'wildBonus' || !bonusColor);
+          return shown.map((ability, i) => (
+            <g key={ability} transform={`translate(${52 + i * 30 - (shown.length - 1) * 15} ${def.crowns > 0 ? 100 : 92})`}>
+              <circle r={17} fill="rgba(0,0,0,0.34)" stroke="rgba(255,255,255,0.3)" strokeWidth={1.2} />
+              <text textAnchor="middle" dominantBaseline="central" fontSize={20} fill="#f4ecd6">
                 {ABILITY_GLYPH[ability] ?? '•'}
               </text>
             </g>
-          ))}
+          ));
+        })()}
       </g>
 
-      {/* Cost, bottom-left. */}
-      <g transform="translate(16 130)">
-        {costEntries.map(([color, n], i) => (
-          <Gem key={color} color={color} size={19} label={String(n)} x={i * 21} y={0} />
-        ))}
-      </g>
-      {costEntries.length === 0 && (
-        <text x={12} y={135} fontSize={11} fill="#cdbfa0">
+      {/* Cost along the bottom, sized to however many colours it asks for (up to four). */}
+      {costEntries.length > 0 && (
+        <g>
+          {(() => {
+            const n = costEntries.length;
+            const pitch = Math.min(30, 98 / n);
+            const size = pitch * 0.94;
+            const start = 52 - ((n - 1) * pitch) / 2;
+            return costEntries.map(([color, amount], i) => (
+              <Gem key={color} color={color} size={size} label={String(amount)} x={start + i * pitch} y={130} />
+            ));
+          })()}
+        </g>
+      )}
+      {def.kind !== 'royal' && costEntries.length === 0 && (
+        <text x={52} y={135} fontSize={15} textAnchor="middle" fill="#d8cbac">
           free
         </text>
       )}
-      <text x={97} y={146} fontSize={8} textAnchor="end" fill="rgba(255,255,255,0.35)">
-        {def.kind === 'royal' ? 'ROYAL' : `L${def.level}`}
+
+      <text x={98} y={13} fontSize={11} fontWeight={700} textAnchor="end" fill="rgba(255,255,255,0.34)">
+        {def.kind === 'royal' ? 'R' : `L${def.level}`}
       </text>
     </svg>
   );

@@ -133,9 +133,15 @@ The board includes a turn guide that lists what you can do right now — derived
 legal-move list that drives the clickable affordances, so it cannot describe a move the server would
 refuse — plus a rules cheatsheet, which opens automatically the first time you play.
 
-**The whole match view fits one screen.** The pyramid and the token board scale with the window, and
-when space is tight the turn guide is what gives way (its list scrolls, and fades to say so) rather
-than the board. Browser tests assert zero page overflow at four laptop viewports, in the states that
+**The whole match view fits one screen.** Card and board sizes are measured from the space actually
+available rather than clamped to viewport height, so they use spare width too — cards run 86–151px and
+the token board 260–530px depending on the window. Since there is no artwork to leave room for, the
+card faces are laid out to fill: large prestige numbers, crowns, bonus gems and costs, and royals get
+their own layout because they carry only two attributes.
+
+The turn guide lives in the sidebar rather than above the board. That is not cosmetic: it is ~150px
+taller on your turn than while waiting, and in the board column that swing resized every card on every
+move. Browser tests assert zero page overflow at four laptop viewports, in the states that
 add the most content — your turn with the guide open, a card panel open, a pending decision — and
 also that nothing is clipped by an ancestor, which is a different failure that bounding-box checks
 miss entirely. Below roughly 900px wide or 620px tall the page gets its scroll back, because no

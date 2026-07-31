@@ -27,6 +27,11 @@ export type BoardComponent = ComponentType<BoardProps>;
 export interface BoardModule {
   default: BoardComponent;
   describeEffect?: (effect: Record<string, unknown>) => string;
+  /**
+   * Optional panel rendered in the app's sidebar. Games use it for things that would otherwise sit in
+   * the board column competing with the board for height — Splendor Duel puts its turn guide here.
+   */
+  Sidebar?: BoardComponent;
 }
 
 const BOARDS: Record<string, () => Promise<BoardModule>> = {

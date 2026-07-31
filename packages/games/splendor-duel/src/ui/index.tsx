@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { card, tryCard } from '../cards.js';
 import { legalActionsFromView } from '../predict.js';
 import { effectiveCost, minimalPayment } from '../score.js';
@@ -14,6 +14,7 @@ import type {
 import { GEM_COLORS, PAY_COLORS, TOKEN_COLORS, TOKEN_LIMIT } from '../types.js';
 import { CardDefs, CardView, Crown, Gem } from './Card.tsx';
 import { HelpPanel, TurnGuide, VictoryTracker, describeTurn } from './Guide.tsx';
+import { COL_GAP, ROW_GAP, useBoardMetrics } from './metrics.js';
 import { TokenBoard } from './TokenBoard.tsx';
 import './splendor.css';
 
@@ -75,8 +76,14 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
   const [wildColor, setWildColor] = useState<GemColor | null>(null);
   const [goldSwaps, setGoldSwaps] = useState<Partial<Record<PayColor, number>>>({});
   const [discardPick, setDiscardPick] = useState<Partial<Record<TokenColor, number>>>({});
-  // Open by default for a first-time player; the choice sticks after that.
-  const [helpOpen, setHelpOpen] = useState(() => readFlag(SEEN_HELP) !== '1');
+  /*
+   * The middle row's height is decided by flex and does not depend on its contents, so measuring it
+   * and sizing the cards and board to fit is not circular. This is what lets the board use spare
+   * *width* as well as spare height -- a viewport-height clamp alone left the cards small with a few
+   * hundred pixels sitting empty beside the board. See metrics.ts.
+   */
+  const middleRef = useRef<HTMLDivElement>(null);
+  const metrics = useBoardMetrics(middleRef);
 
   /**
    * Whose turn it is, according to the view being rendered.
@@ -239,25 +246,25 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
 
   /* ------------------------------------------------------------ render */
 
-  const closeHelp = () => {
-    setHelpOpen(false);
-    writeFlag(SEEN_HELP, '1');
-  };
-
   return (
-    <div className="sd">
+    <div
+      className="sd"
+      style={
+        {
+          '--card-w': `${metrics.cardW}px`,
+          // Published from metrics.ts so the arithmetic there and the layout here cannot disagree.
+          '--row-gap': `${ROW_GAP}px`,
+          '--col-gap': `${COL_GAP}px`,
+          '--royal-w': `${metrics.royalW}px`,
+          '--board-size': `${metrics.boardSize}px`,
+        } as React.CSSProperties
+      }
+    >
       <CardDefs />
-      {helpOpen && <HelpPanel onClose={closeHelp} />}
-
-      <TurnGuide
-        suggestions={myTurn ? describeTurn(view, seat, legal) : []}
-        myTurn={myTurn}
-        onOpenHelp={() => setHelpOpen(true)}
-      />
 
       <PlayerStrip player={them} label="Opponent" isTurn={actors.includes(them.seat)} />
 
-      <div className="sd-middle">
+      <div className="sd-middle" ref={middleRef}>
         <div className="sd-pyramid">
           {([3, 2, 1] as Level[]).map((level) => (
             <div className="sd-row" key={level}>
@@ -308,12 +315,37 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
             replenishPreview={mode.k === 'idle' && has((a) => a.t === 'replenish') ? view.bag.total : 0}
           />
 
+          {/* Under the board, in the board column: they get a real size here, and the column is as
+              wide as the board so four of them fit comfortably. */}
+          <div className="sd-royals">
+            <span className="sd-label">Royals</span>
+            <div className="sd-royal-row">
+              {view.royals.map((royalId, i) => (
+                <CardView
+                  key={i}
+                  cardId={royalId}
+                  size="royal"
+                  affordable={decided?.k === 'royal' && royalId !== null}
+                  onClick={
+                    decided?.k === 'royal' && royalId && !locked
+                      ? () => submit({ t: 'chooseRoyal', royalId } satisfies SplendorAction)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          </div>
         </div>
+
       </div>
 
-      {/* Bag, scrolls and royals span the full width rather than sitting in the board column, which
-          is only as wide as the board and clipped them. */}
-      <div className="sd-supply">
+      {/*
+        Bag, scrolls and the victory tracker, as one full-width strip. It was briefly a column beside
+        the board, which used more of the spare width but made the whole board resize whenever the
+        turn changed: the turn guide is ~150px taller on your turn than while waiting, which moved the
+        height budget enough to flip the column in and out. A stable board beats a slightly fuller one.
+      */}
+      <div className="sd-info">
         <div className="sd-bag" title="The bag's contents are public; only its order is secret">
           <span className="sd-label">Bag ({view.bag.total})</span>
           <div className="sd-bag-gems">
@@ -325,32 +357,15 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
             ))}
             {view.bag.total === 0 && <span className="muted">empty</span>}
           </div>
-        </div>
-        <div className="sd-privileges" title="Privilege scrolls not held by either player">
-          <span className="sd-label">Scrolls</span>
+          </div>
+          <div className="sd-privileges" title="Privilege scrolls held by neither player">
+          <span className="sd-label">Scrolls above the board</span>
           <span className="sd-scrolls">{'✦'.repeat(view.privilegePool) || '—'}</span>
-        </div>
-        <div className="sd-royals">
-          <span className="sd-label">Royals</span>
-          {view.royals.map((royalId, i) => (
-            <CardView
-              key={i}
-              cardId={royalId}
-              size="royal"
-              affordable={decided?.k === 'royal' && royalId !== null}
-              onClick={
-                decided?.k === 'royal' && royalId && !locked
-                  ? () => submit({ t: 'chooseRoyal', royalId } satisfies SplendorAction)
-                  : undefined
-              }
-            />
-          ))}
-        </div>
+          </div>
       </div>
 
       <div className="sd-bottom">
         <PlayerStrip player={me} label="You" isTurn={myTurn} />
-        <VictoryTracker player={me} />
       </div>
 
       {/* ------------------------------------------------ action bar */}
@@ -707,5 +722,54 @@ function PlayerStrip({
         )}
       </div>
     </section>
+  );
+}
+
+
+/* ------------------------------------------------------------------ sidebar panel */
+
+/**
+ * The turn guide, the rules cheatsheet and the victory tracker, rendered in the app's sidebar.
+ *
+ * These used to sit above the board. The guide is roughly 150px taller on your turn than while you
+ * are waiting, so in the board column it moved the height budget every single move and the cards and
+ * token board visibly resized each time. Out here it costs the board nothing and never jumps.
+ */
+export function Sidebar({ view: raw, seat, actors, pending }: BoardProps) {
+  const view = raw as SplendorView | null;
+  const [helpOpen, setHelpOpen] = useState(() => readFlag(SEEN_HELP) !== '1');
+
+  const myTurn = seat !== null && view !== null && view.turn === seat && view.stage !== 'over';
+  const legal = useMemo(() => {
+    if (!view || seat === null || !myTurn) return [];
+    try {
+      return legalActionsFromView(view, seat).actions;
+    } catch {
+      return [];
+    }
+  }, [view, seat, myTurn]);
+
+  if (!view || seat === null) return null;
+  const me = view.players[seat as 0 | 1];
+
+  const closeHelp = () => {
+    setHelpOpen(false);
+    writeFlag(SEEN_HELP, '1');
+  };
+
+  return (
+    <div className="sd-sidebar">
+      {helpOpen && <HelpPanel onClose={closeHelp} />}
+      <TurnGuide
+        suggestions={myTurn ? describeTurn(view, seat, legal) : []}
+        myTurn={myTurn}
+        onOpenHelp={() => setHelpOpen(true)}
+      />
+      <div className="panel compact">
+        <VictoryTracker player={me} />
+      </div>
+      {pending && <span className="muted">Sending…</span>}
+      {actors.length === 0 && <span className="muted">Match over.</span>}
+    </div>
   );
 }

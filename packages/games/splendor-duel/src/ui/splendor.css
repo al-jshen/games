@@ -8,10 +8,13 @@
  * --card-w is the one knob; card height follows from the SVG aspect ratio (1 : 1.452).
  */
 .sd {
-  /* Only used for the things that are not flex-sized: reserved-card thumbnails, gems, the deck
-     column's minimum. The pyramid and the token board size themselves from the space they are
-     given, which is what makes overflow impossible rather than merely unlikely. */
-  --card-w: clamp(44px, 8.2vh, 96px);
+  /* Fallbacks. The real values are measured and set inline -- see metrics.ts -- so that the board
+     grows into spare width as well as spare height. */
+  --card-w: 92px;
+  --royal-w: 72px;
+  --board-size: 290px;
+  --row-gap: 6px;
+  --col-gap: 16px;
   --gem: clamp(16px, 2.5vh, 26px);
   display: flex;
   flex-direction: column;
@@ -33,20 +36,23 @@
  */
 .sd-middle {
   display: flex;
-  gap: clamp(8px, 1.6vw, 20px);
+  gap: var(--col-gap);
   /* `stretch`, not `flex-start`: this row is a horizontal flex container, so its children only get a
      definite height from the cross-axis stretch. With `flex-start` the pyramid rows had no height to
      divide, fell back to their minimum, and left the cards tiny with a gap below them. */
   align-items: flex-start;
   /*
-   * `flex: 1 1 auto` with the default `min-height: auto` is what stops flex shrinking this below its
-   * content, so the board keeps its size and the turn guide (which scrolls) yields instead.
+   * `flex: 1 1 0` on purpose: this row's height is whatever is left over, independent of what is
+   * inside it. That is what makes the measurement in metrics.ts non-circular -- the contents are
+   * sized to fit the box, and cannot then change the box.
    *
-   * Note there is deliberately no `overflow: hidden` here. Setting it would replace that automatic
-   * minimum with zero -- per the flexbox spec, the automatic minimum size only applies while overflow
-   * is visible -- which silently clipped the level-1 card row and the bottom of the token board.
+   * The explicit `min-height` still applies despite `overflow: hidden` (only the *automatic* minimum
+   * is disabled by a non-visible overflow), so the board cannot be squeezed to nothing.
    */
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-height: 216px;
+  overflow: hidden;
+  flex-wrap: wrap;
 }
 
 /*
@@ -57,14 +63,14 @@
 .sd-pyramid {
   display: flex;
   flex-direction: column;
-  gap: clamp(3px, 0.7vh, 8px);
+  gap: var(--row-gap);
   min-width: 0;
   flex: 0 0 auto;
 }
 
 .sd-row {
   display: flex;
-  gap: clamp(3px, 0.6vw, 8px);
+  gap: var(--row-gap);
   align-items: flex-start;
   flex: none;
 }
@@ -77,7 +83,7 @@
   gap: 1px;
   width: calc(var(--card-w) * 0.56);
   height: calc(var(--card-w) * 1.452);
-  min-width: 32px;
+  min-width: 30px;
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
@@ -96,15 +102,24 @@
 /* Royals sit beside the token board rather than under the pyramid: as a fourth card row they cost
    ~110px of height, which is most of what made the board overflow a laptop screen. */
 /*
- * Must not shrink or wrap. With `min-width: 0` and wrapping it collapsed to one card per line, went
- * 400px tall, and squeezed the board down to its minimum -- the whole layout unravelled from here.
+ * Beneath the board, in the board column. Must not shrink or wrap: when it was allowed to, it
+ * collapsed to one card per line, became 400px tall, and squeezed the board to its minimum.
  */
 .sd-royals {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.sd-royal-row {
+  display: flex;
+  gap: 5px;
   align-items: center;
   flex-wrap: nowrap;
-  flex: 0 0 auto;
+}
+/* Royals carry only prestige and an ability, so they read fine a little smaller than a jewel card. */
+.sd-royals .sd-label {
+  margin-bottom: 1px;
 }
 .sd-right {
   display: flex;
@@ -120,7 +135,7 @@
    height and were the thing that got clipped behind the player panel. */
 .sd-supply {
   display: flex;
-  gap: 16px;
+  gap: 20px;
   align-items: center;
   flex-wrap: wrap;
   flex: none;
@@ -177,7 +192,7 @@
   height: auto;
 }
 .card--royal {
-  width: calc(var(--card-w) * 0.62);
+  width: var(--royal-w);
 }
 .card--small {
   width: calc(var(--card-w) * 0.6);
@@ -209,8 +224,8 @@
 /* ---------------------------------------------------------------- token board */
 
 .token-board {
-  width: clamp(186px, 30vh, 300px);
-  height: auto;
+  width: var(--board-size);
+  height: var(--board-size);
   flex: none;
 }
 
@@ -363,13 +378,18 @@
 
 /* ---------------------------------------------------------------- turn guide */
 
+/*
+ * A fixed height, deliberately. The guide's content is ~150px taller on your turn than while you are
+ * waiting, and letting it size to content meant the height budget moved every turn -- so the cards
+ * and the board visibly resized on every move. A calm, stable board is worth the few pixels this
+ * wastes while waiting.
+ */
 .sd-guide {
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   border-radius: 10px;
   background: var(--panel);
-  padding: 10px 12px;
-  /* Shrinks before the board does. */
+  padding: 8px 12px;
   flex: 0 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -572,7 +592,7 @@
   font-size: 12.5px;
   line-height: 1.32;
   /* On a short screen the guide would otherwise crowd out the board it is describing. */
-  max-height: min(22vh, 184px);
+  /* The list scrolls inside the fixed-height guide; the fade says so. */
   overflow-y: auto;
 }
 .sd-guide-note {
@@ -588,22 +608,19 @@
   flex: none;
 }
 .sd-bottom .sd-player {
-  flex: 1 1 460px;
+  flex: 1 1 auto;
   min-width: 0;
 }
-.sd-bottom .sd-victory {
-  flex: 0 1 280px;
-  justify-content: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  padding: 6px 10px;
-}
+
 
 .sd-actions {
   padding: clamp(4px, 0.8vh, 8px) 10px;
   position: static;
   flex: none;
+  /* A fixed floor so the bar is the same height whether it holds buttons or just "waiting...".
+     Otherwise the height budget differs by a few pixels between the two players and the cards come
+     out very slightly different sizes on each screen. */
+  min-height: 52px;
 }
 
 /*
@@ -686,4 +703,54 @@
 /* Enough room for "Best colour (green)" without an ellipsis. */
 .sd-victory-row {
   grid-template-columns: 128px 1fr 44px;
+}
+
+/* ---------------------------------------------------------------- info strip */
+
+/*
+ * Bag, scrolls and the victory tracker, in one full-width row below the board. Kept out of the middle
+ * row on purpose: as a column beside the board it filled more of the spare width, but it flipped in
+ * and out as the turn guide grew and shrank, resizing the whole board every move.
+ */
+.sd-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 22px;
+  flex: none;
+  padding: 6px 2px 0;
+  border-top: 1px solid var(--line);
+}
+.sd-info .sd-bag,
+.sd-info .sd-privileges {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.sd-info .sd-victory {
+  flex: 1 1 300px;
+  max-width: 420px;
+}
+
+/* ---------------------------------------------------------------- sidebar panel */
+
+.sd-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+/*
+ * In the sidebar the guide is one narrow column, so it needs room to breathe and its own scroll. The
+ * cap matters: left uncapped it starved the move log below it to zero height.
+ */
+.sd-sidebar .sd-guide {
+  height: auto;
+  max-height: 36vh;
+  flex: 0 1 auto;
+}
+.sd-sidebar .sd-guide ul {
+  grid-template-columns: 1fr;
+  gap: 5px;
 }

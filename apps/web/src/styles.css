@@ -230,8 +230,8 @@ input:focus {
   min-height: 0;
 }
 .sidebar {
-  width: 236px;
-  flex: 0 0 236px;
+  width: 250px;
+  flex: 0 0 250px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -320,8 +320,9 @@ input:focus {
 .log {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  flex: 1;
+  /* A floor, so a tall game panel above cannot squeeze the log down to just its heading. */
+  min-height: 118px;
+  flex: 1 1 auto;
 }
 .log ol {
   list-style: none;
