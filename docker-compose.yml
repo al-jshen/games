@@ -18,8 +18,16 @@ services:
     # Published on loopback only, for standalone use and for poking at /healthz from the host.
     # If a reverse proxy reaches this over a Docker network, use docker-compose.caddy.yml instead,
     # which drops the published port entirely.
-    ports:
-      - "127.0.0.1:${GAMES_PORT:-8787}:${GAMES_PORT:-8787}"
+    networks:
+      - caddy
+
+
 
 volumes:
   games-data:
+
+networks:
+  caddy:
+    name: caddy_net
+    external: true
+
