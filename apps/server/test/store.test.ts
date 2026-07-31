@@ -1,10 +1,12 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MatchRecord } from '@games/engine';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { JsonlReplayStore, MemoryReplayStore, type ReplayStore } from '../src/replay-store.js';
+import { startServer } from '../src/server.js';
 import { SqliteReplayStore } from '../src/sqlite-store.js';
+import { reportStoreError, resetStoreErrorThrottle } from '../src/store-errors.js';
 
 /**
  * The three stores are interchangeable behind one interface, so they get one shared suite. The
@@ -162,5 +164,66 @@ describe('sqlite store durability', () => {
     await store.save(withMoves(1));
     expect(await store.load('m-1')).not.toBeNull();
     store.close();
+  });
+});
+
+
+describe('when the store cannot write', () => {
+  /**
+   * The failure that mattered was not the permission error itself but that nobody heard about it:
+   * writes were swallowed, so a data directory that was never writable looked exactly like a healthy
+   * server that simply had no matches yet.
+   */
+  it('reports the failure instead of swallowing it, and keeps the match playable', async () => {
+    resetStoreErrorThrottle();
+    const messages: string[] = [];
+    const failing: ReplayStore = {
+      save: () => Promise.reject(new Error('unable to open database file')),
+      load: () => Promise.resolve(null),
+      findByCode: () => Promise.resolve(null),
+      list: () => Promise.resolve([]),
+    };
+
+    const server = await startServer({
+      port: 0,
+      host: '127.0.0.1',
+      webRoot: null,
+      store: failing,
+      sessionSecret: 'store-failure-secret-long-enough',
+      quiet: true,
+    });
+
+    try {
+      // The registry and socket layer both log through this.
+      reportStoreError(new Error('unable to open database file'), 'match ABC234', (m) => messages.push(m));
+      expect(messages.join('\n')).toContain('could not save match record');
+      // ...and the message has to be actionable, not just the bare SQLite string.
+      expect(messages.join('\n')).toMatch(/chown|writable/i);
+
+      // Throttled, so a per-move failure cannot bury the log.
+      const before = messages.length;
+      for (let i = 0; i < 20; i++) {
+        reportStoreError(new Error('unable to open database file'), 'match ABC234', (m) => messages.push(m));
+      }
+      expect(messages.length, 'repeat failures should be throttled').toBe(before);
+
+      // A failing store must not stop the server serving.
+      const health = (await fetch(`${server.url}/healthz`).then((r) => r.json())) as { ok: boolean };
+      expect(health.ok).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('explains a database it cannot open, rather than just "unable to open database file"', () => {
+    const readOnly = join(dir, 'read-only');
+    mkdirSync(readOnly);
+    chmodSync(readOnly, 0o555);
+    try {
+      expect(() => new SqliteReplayStore(join(readOnly, 'games.db'))).toThrow(/cannot open the match database/);
+      expect(() => new SqliteReplayStore(join(readOnly, 'games.db'))).toThrow(/chown|writable/i);
+    } finally {
+      chmodSync(readOnly, 0o755);
+    }
   });
 });

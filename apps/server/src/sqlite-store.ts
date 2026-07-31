@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { MatchRecord } from '@games/engine';
 import type { MatchSummary, ReplayStore } from './replay-store.js';
 
@@ -44,7 +44,26 @@ export class SqliteReplayStore implements ReplayStore {
   constructor(private readonly file: string) {
     if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
     const { DatabaseSync } = loadSqlite();
-    this.db = new DatabaseSync(file);
+    try {
+      this.db = new DatabaseSync(file);
+    } catch (error) {
+      // SQLite says only "unable to open database file", which is true and useless. The cause is
+      // nearly always that the directory is not writable by the user the process runs as -- and note
+      // that SQLite needs to create `-wal` and `-shm` siblings, so directory write permission is
+      // required even when the database file itself already exists.
+      throw new Error(
+        `cannot open the match database at ${resolve(file)}: ${
+          error instanceof Error ? error.message : String(error)
+        }\n` +
+          `  Running as uid ${typeof process.getuid === 'function' ? process.getuid() : 'unknown'}. ` +
+          'The directory must be writable by that user, and SQLite needs to create -wal and -shm ' +
+          'files beside the database.\n' +
+          '  With a Docker bind mount, the host directory is what counts: `chown -R 1000:1000 ./data` ' +
+          '(1000 is the `node` user in the image). Or set REPLAY_STORE=memory to run without ' +
+          'persistence.',
+        { cause: error },
+      );
+    }
     // WAL so a reader cannot block the move that is being written.
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA synchronous = NORMAL');

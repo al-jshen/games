@@ -48,8 +48,8 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const dataDir = options.dataDir ?? 'data';
   const store = options.store ?? createStore(options.storeKind, dataDir);
   const secret = resolveSecret(options.sessionSecret ?? process.env.SESSION_SECRET);
-  const rooms = new RoomRegistry(store);
   const log = options.quiet ? () => undefined : (msg: string) => console.log(msg);
+  const rooms = new RoomRegistry(store, log);
 
   const handler = createRequestHandler({ rooms, store, webRoot: options.webRoot ?? null });
   const http = createServer((req, res) => {
@@ -64,7 +64,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     perMessageDeflate: false,
     maxPayload: 256 * 1024,
   });
-  const stopHeartbeat = attachSocketServer(wss, { rooms, store, secret });
+  const stopHeartbeat = attachSocketServer(wss, { rooms, store, secret, log });
 
   http.on('upgrade', (req, socket: Socket, head) => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;

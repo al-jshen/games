@@ -11,6 +11,7 @@ import { gameCatalog } from './registry.js';
 import type { Connection, Room, RoomRegistry } from './rooms.js';
 import type { ReplayStore } from './replay-store.js';
 import { verifyToken } from './sessions.js';
+import { reportStoreError } from './store-errors.js';
 
 /** Server pings this often; also keeps proxies from reaping an idle socket mid-turn. */
 const PING_INTERVAL_MS = 25_000;
@@ -92,9 +93,16 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
         }
       }
     }
-    // After *every* move, not just the last one. The store upserts on match id, so this is cheap and
-    // idempotent, and it means an interrupted match is still on disk to replay.
-    void room.persist(deps.store).catch(() => undefined);
+    /*
+     * After *every* move, not just the last one. The store upserts on match id, so this is cheap and
+     * idempotent, and it means an interrupted match is still on disk to replay.
+     *
+     * Reported rather than swallowed: a failure here must not interrupt a live game, but silently
+     * discarding it is how a data directory that was never writable went unnoticed indefinitely.
+     */
+    void room.persist(deps.store).catch((error: unknown) => {
+      reportStoreError(error, `match ${room.code}`, deps.log);
+    });
   };
 
   const joinRoom = (ws: WebSocket, state: SocketState, room: Room, name: string): void => {

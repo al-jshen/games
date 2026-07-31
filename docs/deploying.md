@@ -50,8 +50,20 @@ Three things to get right:
    attach it to `caddy_net` as an external network there as well; otherwise Caddy cannot resolve the
    name at all.
 
-Replay logs land in `./data` next to the compose file (bind-mounted to `/data`), which `.gitignore`
+Match records land in `./data` next to the compose file (bind-mounted to `/data`), which `.gitignore`
 excludes. Back that directory up if you care about match history.
+
+**The host directory has to be writable by uid 1000** (`node` in the image), because a bind mount
+replaces whatever the image put there, ownership included. If Docker created `./data` for you it will
+be owned by root, and the server will refuse to start with `unable to open database file`:
+
+```bash
+mkdir -p data && sudo chown -R 1000:1000 data
+```
+
+SQLite needs to create `-wal` and `-shm` files beside the database, so directory write permission is
+required even once the database itself exists. If you would rather not chown, `user: "0:0"` in compose
+works, or `REPLAY_STORE=memory` runs with no persistence at all.
 
 `encode gzip` is fine to leave on; it applies to ordinary HTTP responses and does not touch WebSocket
 frames. The server disables `permessage-deflate` deliberately — frames are a few KB, so compressing

@@ -13,6 +13,7 @@ import { generateCode } from './codes.js';
 import { getGame } from './registry.js';
 import { mintToken, newPlayerId, type SessionClaim } from './sessions.js';
 import type { ReplayStore } from './replay-store.js';
+import { reportStoreError, type Logger } from './store-errors.js';
 
 /** How long a room with no second player survives. Long enough to paste a code into chat. */
 const LOBBY_TTL_MS = 30 * 60 * 1000;
@@ -246,7 +247,10 @@ export class RoomRegistry {
   private readonly byCode = new Map<string, Room>();
   private readonly byMatchId = new Map<string, Room>();
 
-  constructor(private readonly store: ReplayStore) {}
+  constructor(
+    private readonly store: ReplayStore,
+    private readonly log?: Logger,
+  ) {}
 
   create(gameId: string, options: unknown): { ok: true; room: Room } | { ok: false; code: string; message: string } {
     const mod = getGame(gameId);
@@ -299,8 +303,9 @@ export class RoomRegistry {
       try {
         await room.persist(this.store);
         saved += 1;
-      } catch {
-        // One bad write must not stop the rest from being saved.
+      } catch (error) {
+        // One bad write must not stop the rest from being saved -- but it is still reported.
+        reportStoreError(error, `flushing match ${room.code}`, this.log);
       }
     }
     return saved;
@@ -313,8 +318,9 @@ export class RoomRegistry {
       if (room.match.record.actions.length > 0) {
         try {
           await room.persist(this.store);
-        } catch {
-          // Losing a replay must never take the server down.
+        } catch (error) {
+          // Losing a replay must never take the server down, but it should not be silent either.
+          reportStoreError(error, `sweeping match ${room.code}`, this.log);
         }
       }
       room.dispose();
