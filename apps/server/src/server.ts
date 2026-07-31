@@ -21,6 +21,8 @@ export interface ServerOptions {
   /** `sqlite` (default), `jsonl`, or `memory`. Overridden by the REPLAY_STORE env var. */
   storeKind?: 'sqlite' | 'jsonl' | 'memory';
   sessionSecret?: string;
+  /** Actions per socket per second. Defaults to ACTION_RATE_LIMIT, then to 1000. */
+  actionRateLimit?: number;
   quiet?: boolean;
 }
 
@@ -64,7 +66,13 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     perMessageDeflate: false,
     maxPayload: 256 * 1024,
   });
-  const stopHeartbeat = attachSocketServer(wss, { rooms, store, secret, log });
+  const stopHeartbeat = attachSocketServer(wss, {
+    rooms,
+    store,
+    secret,
+    log,
+    ...(options.actionRateLimit === undefined ? {} : { actionRateLimit: options.actionRateLimit }),
+  });
 
   http.on('upgrade', (req, socket: Socket, head) => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;

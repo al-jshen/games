@@ -87,6 +87,7 @@ certificates too.
 | `HOST` | `0.0.0.0` | |
 | `DATA_DIR` | `/data` | Match records. Bind-mounted, so back this up if you want history. |
 | `REPLAY_STORE` | `sqlite` | `sqlite` (`$DATA_DIR/games.db`), `jsonl` (append-only file), or `memory`. |
+| `ACTION_RATE_LIMIT` | `1000` | Actions per socket per second. A flood guard, not a pace limiter — see the performance notes in `docs/protocol.md`. |
 | `WEB_ROOT` | `/app/web` | Set to empty to serve API and WebSocket only. |
 
 ## Operating it

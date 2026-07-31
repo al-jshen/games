@@ -25,6 +25,7 @@ npm test             # rules invariants, redaction, replay, wire schema, live so
 npm run test:e2e     # real headless browser, two players, a full game
 npm run typecheck
 npm run lint
+npm run bench        # latency and throughput, measured against a real server
 npm run verify:spiral   # re-derive the board's fill order from the printed art
 ```
 
@@ -44,6 +45,12 @@ python3 sdk/python/bots/duel.py --games 5                      # bot vs bot, ful
 
 The SDK uses `websockets` when it is installed and falls back to a bundled standard-library client
 otherwise, so the examples run either way. Both paths are exercised against a live server.
+
+A move costs **~0.15 ms** round trip on the same host, and the server does ~0.05 ms of work per move.
+One socket is capped at 1000 actions/sec (`ACTION_RATE_LIMIT`) as a flood guard. Over the internet,
+RTT dominates everything: at 20 ms RTT expect ~50 moves/sec. For training, drive the engine in-process
+instead — the same code without a socket runs at ~90,000 moves/sec. `npm run bench` and
+`docs/protocol.md` have the full numbers.
 
 ## Deploying
 

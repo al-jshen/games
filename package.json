@@ -26,7 +26,8 @@
     "verify:spiral": "npm run -w @games/tool-verify-spiral start",
     "lint": "eslint .",
     "clean": "rm -rf packages/*/dist packages/games/*/dist apps/*/dist tools/*/dist apps/web/dist *.tsbuildinfo",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "bench": "npm run -w @games/tool-bench start"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

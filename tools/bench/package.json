@@ -1,0 +1,13 @@
+{
+  "name": "@games/tool-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node bench.mjs"
+  },
+  "dependencies": {
+    "@games/server": "*",
+    "ws": "^8.18.0"
+  }
+}

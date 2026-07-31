@@ -227,3 +227,58 @@ describe('when the store cannot write', () => {
     }
   });
 });
+
+
+describe('the per-socket flood guard', () => {
+  /**
+   * Worth an explicit test because the number is easy to trip over: a long-lived bot on one socket is
+   * capped, and a benchmark that opens a fresh socket per match will not notice.
+   *
+   * The guard runs before validation, so an action that would be refused on other grounds still
+   * counts against the budget.
+   */
+  it('caps actions per socket per second, and says so', async () => {
+    {
+      const server = await startServer({
+        port: 0,
+        host: '127.0.0.1',
+        webRoot: null,
+        store: new MemoryReplayStore(),
+        sessionSecret: 'ratelimit-secret-long-enough',
+        actionRateLimit: 25,
+        quiet: true,
+      });
+      const url = `${server.url.replace('http', 'ws')}/ws`;
+      const { WebSocket } = await import('ws');
+
+      const frames: Record<string, unknown>[] = [];
+      const ws = new WebSocket(url, { perMessageDeflate: false });
+      ws.on('message', (raw: unknown) => frames.push(JSON.parse(String(raw))));
+      await new Promise<void>((done, fail) => {
+        ws.once('open', () => done());
+        ws.once('error', fail);
+      });
+      const send = (frame: unknown) => ws.send(JSON.stringify(frame));
+
+      send({ t: 'hello', protocolVersion: 1 });
+      send({ t: 'create', gameId: 'splendor-duel' });
+      await new Promise((r) => setTimeout(r, 120));
+
+      // Well past the configured budget, in one burst.
+      for (let i = 0; i < 80; i++) {
+        send({ t: 'action', expectVersion: 0, clientActionId: `f${i}`, action: { t: 'replenish' } });
+      }
+      await new Promise((r) => setTimeout(r, 400));
+
+      const limited = frames.filter((f) => f.t === 'rejected' && f.code === 'RATE_LIMITED');
+      const judged = frames.filter((f) => f.t === 'rejected' && f.code !== 'RATE_LIMITED');
+      expect(judged.length, 'exactly the budget should be judged on their merits').toBe(25);
+      expect(limited.length, 'the rest should be rate limited').toBe(55);
+      // The message has to point at the knob, or a legitimate fast bot has no idea what to do.
+      expect(String(limited[0]?.message)).toContain('ACTION_RATE_LIMIT');
+
+      ws.close();
+      await server.close();
+    }
+  });
+});

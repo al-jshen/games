@@ -235,3 +235,43 @@ match exactly. Records are upserted into SQLite after every move, so an interrup
 retrievable and still replays. It is the bug-report format, the training corpus, and the CI regression
 input all at once. The seed is included only once a match is finished, since there is nothing left to
 protect by then.
+
+## Performance
+
+Measured with `npm run bench`, on an M-series laptop over loopback. Treat these as a ceiling: on a
+real network the round trip is RTT *plus* these numbers, and RTT wins by two orders of magnitude.
+
+| | |
+| --- | --- |
+| `action` → `applied`, round trip | **0.15 ms** p50, 0.22 ms p95, 0.45 ms p99 |
+| `legalActions` → `legal`, round trip | 0.06 ms p50 |
+| Redacted view | ~2.1 KB of JSON; ~4.5 KB received per move across both clients |
+| Server work per move | ~0.05 ms — reducer 0.010, redact both seats 0.006, serialise 0.006, SQLite upsert 0.035 |
+| Rules engine alone, in-process | ~90,000 moves/sec |
+| Aggregate throughput | ~6,800 moves/sec with SQLite, ~10,000 with `REPLAY_STORE=memory` |
+
+Two things dominate in practice:
+
+**The per-socket flood guard.** One socket is capped at `ACTION_RATE_LIMIT` actions per second
+(default 1000). It exists to stop a runaway loop wedging a single-threaded process, not to pace a bot
+— a move costs the server ~0.05 ms, so even the default leaves one socket using a few percent of
+capacity. Exceeding it returns `rejected{code:"RATE_LIMITED"}`, which is retryable.
+
+**Round-trip time, once you are not on localhost.** A bot's move is one round trip if it computes
+legal moves itself, or two if it asks the server:
+
+| Deployment | One round trip | Moves/sec, computing legal moves locally | Moves/sec, using `legalActions` |
+| --- | --- | --- | --- |
+| Same host | ~0.15 ms | capped at 1000 | capped at 1000 |
+| Same LAN | ~0.5 ms | ~1500 → capped at 1000 | ~750 |
+| Internet, 20 ms RTT | ~20 ms | ~50 | ~25 |
+| Internet, 80 ms RTT | ~80 ms | ~12 | ~6 |
+
+Latency grows linearly with concurrency while aggregate throughput stays flat — 48 simultaneous
+matches sit at 6.6 ms p50 and still total ~6,700 moves/sec. That is queueing on a single-threaded
+event loop, not the server getting slower.
+
+**If you are training a bot, do not go over the socket at all.** Drive the game module in-process:
+`createMatch` and `step` from `@games/engine` with `legalActions`/`apply` from the game package give
+~90,000 moves/sec, against the exact same code the server runs. The socket is for playing; the engine
+is for searching.

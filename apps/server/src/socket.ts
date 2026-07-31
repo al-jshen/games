@@ -26,22 +26,39 @@ interface SocketState {
 }
 
 /**
- * Generous on purpose. A bot playing locally at full speed is a legitimate and expected use — that
- * is how self-play and rules testing work — so this only needs to catch a pathological loop, not to
- * enforce a human pace. Each action still costs a full round trip and a reducer run.
+ * Flood guard, per socket, per second.
+ *
+ * Its job is to stop a runaway loop wedging a single-threaded process, not to enforce a human pace:
+ * a bot playing at full speed is an expected use. For scale, a move costs the server about 0.05ms of
+ * work and 0.15ms of round trip on loopback, so even the default leaves one socket using a small
+ * fraction of capacity. Raise it with `ACTION_RATE_LIMIT` if you are driving self-play over the
+ * network — though for training, running the engine in-process is ~10x faster than any socket.
  */
 const ACTION_WINDOW_MS = 1000;
-const ACTION_LIMIT = 400;
+const DEFAULT_ACTION_LIMIT = 1000;
+
+/**
+ * Resolved per server rather than once at module load. That is not only for tests: an embedder
+ * starting a server should be able to set this without reaching for an environment variable.
+ */
+export function resolveActionLimit(configured?: number): number {
+  const value = configured ?? Number(process.env.ACTION_RATE_LIMIT);
+  if (!Number.isFinite(value) || (value as number) <= 0) return DEFAULT_ACTION_LIMIT;
+  return Math.floor(value as number);
+}
 
 export interface SocketDeps {
   rooms: RoomRegistry;
   store: ReplayStore;
   secret: string;
+  /** Actions per socket per second. Defaults to ACTION_RATE_LIMIT, then to 1000. */
+  actionRateLimit?: number;
   log?: (msg: string, extra?: unknown) => void;
 }
 
 export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () => void {
   const states = new Map<WebSocket, SocketState>();
+  const actionLimit = resolveActionLimit(deps.actionRateLimit);
 
   const send = (ws: WebSocket, frame: ServerFrame): void => {
     if (ws.readyState !== ws.OPEN) return;
@@ -230,7 +247,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
 
           const now = Date.now();
           state.actionTimes = state.actionTimes.filter((t) => now - t < ACTION_WINDOW_MS);
-          if (state.actionTimes.length >= ACTION_LIMIT) {
+          if (state.actionTimes.length >= actionLimit) {
             // Reported as a rejected *action*, not a connection error: it names the action it
             // refused and carries authoritative state, so a client retries through its normal
             // error path instead of treating the socket as broken.
@@ -238,7 +255,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
               t: 'rejected',
               clientActionId: frame.clientActionId,
               code: ErrorCodes.RATE_LIMITED,
-              message: 'Too many actions in one second; retry shortly.',
+              message: `More than ${actionLimit} actions in one second; retry shortly. Raise ACTION_RATE_LIMIT if this is legitimate.`,
               snapshot: room.snapshot(seat),
             });
             return;
