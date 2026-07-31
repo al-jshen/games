@@ -216,8 +216,12 @@ export class Room {
     return { ok: true, effects: result.effects };
   }
 
+  /**
+   * Write the current record. Called after every move, not just at the end: the store upserts on the
+   * match id, so this is idempotent, and it means a crash or a redeploy mid-game loses nothing.
+   */
   async persist(store: ReplayStore): Promise<void> {
-    if (this.persisted && this.status !== 'finished') return;
+    if (this.match.record.actions.length === 0) return;
     this.persisted = true;
     await store.save(this.match.record);
   }
@@ -287,6 +291,21 @@ export class RoomRegistry {
    * One global sweeper rather than a timer per room. Per-room intervals are the classic source of
    * leaks and of callbacks firing on disposed objects.
    */
+  /** Flush every live match. Used on shutdown, so a redeploy does not drop games in progress. */
+  async persistAll(): Promise<number> {
+    let saved = 0;
+    for (const room of this.byCode.values()) {
+      if (room.match.record.actions.length === 0) continue;
+      try {
+        await room.persist(this.store);
+        saved += 1;
+      } catch {
+        // One bad write must not stop the rest from being saved.
+      }
+    }
+    return saved;
+  }
+
   async sweep(now = Date.now()): Promise<number> {
     let removed = 0;
     for (const room of [...this.byCode.values()]) {

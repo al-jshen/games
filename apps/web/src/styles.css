@@ -151,6 +151,15 @@ input:focus {
 .panel.compact {
   padding: 12px;
 }
+/* The sidebar's fixed panels are deliberately tight: whatever they take is taken from the game's own
+   panel below them, which is the thing a player actually reads during a turn. */
+.sidebar .panel.compact {
+  padding: 8px 10px;
+}
+.sidebar h3 {
+  margin: 0 0 5px;
+  font-size: 12px;
+}
 
 .lobby {
   max-width: 760px;
@@ -265,11 +274,16 @@ input:focus {
 }
 .code-display {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: clamp(20px, 3.2vh, 30px);
-  letter-spacing: 0.18em;
-  margin: 2px 0 8px;
+  font-size: clamp(18px, 2.6vh, 26px);
+  letter-spacing: 0.16em;
+  margin: 0 0 6px;
   color: var(--accent);
   user-select: all;
+  line-height: 1.2;
+}
+.share .row button {
+  padding: 4px 9px;
+  font-size: 12.5px;
 }
 
 .players {
@@ -278,13 +292,13 @@ input:focus {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .players li {
   display: flex;
   gap: 7px;
   align-items: center;
-  font-size: 14px;
+  font-size: 13px;
 }
 .players li.offline .pname {
   color: var(--muted);
@@ -317,12 +331,15 @@ input:focus {
   letter-spacing: 0;
 }
 
+/*
+ * Pinned rather than flexible: a game's sidebar panel above it grows into the spare height, and if
+ * both could grow they would fight over it. The log scrolls internally instead.
+ */
 .log {
   display: flex;
   flex-direction: column;
-  /* A floor, so a tall game panel above cannot squeeze the log down to just its heading. */
-  min-height: 118px;
-  flex: 1 1 auto;
+  height: clamp(104px, 17vh, 180px);
+  flex: 0 0 auto;
 }
 .log ol {
   list-style: none;
@@ -332,9 +349,11 @@ input:focus {
   flex-direction: column;
   gap: 3px;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   font-size: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 .log li {
   display: flex;

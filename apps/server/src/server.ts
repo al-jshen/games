@@ -2,7 +2,8 @@ import { createServer, type Server } from 'node:http';
 import type { Socket } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { createRequestHandler } from './http.js';
-import { JsonlReplayStore, type ReplayStore } from './replay-store.js';
+import { JsonlReplayStore, MemoryReplayStore, type ReplayStore } from './replay-store.js';
+import { SqliteReplayStore } from './sqlite-store.js';
 import { RoomRegistry } from './rooms.js';
 import { resolveSecret } from './sessions.js';
 import { attachSocketServer } from './socket.js';
@@ -17,6 +18,8 @@ export interface ServerOptions {
   webRoot?: string | null;
   dataDir?: string;
   store?: ReplayStore;
+  /** `sqlite` (default), `jsonl`, or `memory`. Overridden by the REPLAY_STORE env var. */
+  storeKind?: 'sqlite' | 'jsonl' | 'memory';
   sessionSecret?: string;
   quiet?: boolean;
 }
@@ -31,10 +34,19 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
+function createStore(kind: ServerOptions['storeKind'], dataDir: string): ReplayStore {
+  const chosen = (process.env.REPLAY_STORE ?? kind ?? 'sqlite').toLowerCase();
+  if (chosen === 'memory') return new MemoryReplayStore();
+  if (chosen === 'jsonl') return new JsonlReplayStore(dataDir);
+  if (chosen !== 'sqlite') throw new Error(`unknown REPLAY_STORE: ${chosen}`);
+  return new SqliteReplayStore(`${dataDir}/games.db`);
+}
+
 export async function startServer(options: ServerOptions = {}): Promise<RunningServer> {
   const host = options.host ?? '0.0.0.0';
   const port = options.port ?? 8787;
-  const store = options.store ?? new JsonlReplayStore(options.dataDir ?? 'data');
+  const dataDir = options.dataDir ?? 'data';
+  const store = options.store ?? createStore(options.storeKind, dataDir);
   const secret = resolveSecret(options.sessionSecret ?? process.env.SESSION_SECRET);
   const rooms = new RoomRegistry(store);
   const log = options.quiet ? () => undefined : (msg: string) => console.log(msg);
@@ -95,9 +107,18 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     async close() {
       clearInterval(sweeper);
       stopHeartbeat();
+      // Flush live matches before dropping the sockets. Without this a redeploy silently discards
+      // every game in progress, which with `restart: unless-stopped` is a routine occurrence.
+      try {
+        const saved = await rooms.persistAll();
+        if (saved > 0) log(`saved ${saved} in-progress match(es)`);
+      } catch {
+        // Never let a failed write block shutdown.
+      }
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((done) => wss.close(() => done()));
       await new Promise<void>((done) => http.close(() => done()));
+      store.close?.();
     },
   };
 }

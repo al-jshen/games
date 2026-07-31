@@ -157,6 +157,14 @@ export function createRequestHandler(deps: HttpDeps) {
         return;
       }
 
+      // Recent matches. Summaries only -- no record, so no seed.
+      if (path === '/api/matches' && req.method === 'GET') {
+        const limit = Number(url.searchParams.get('limit') ?? 50);
+        const matches = await deps.store.list(Number.isFinite(limit) ? limit : 50);
+        json(res, 200, { matches });
+        return;
+      }
+
       const matchInfo = /^\/api\/matches\/([^/]+)$/.exec(path);
       if (matchInfo && req.method === 'GET') {
         const code = normalizeCode(matchInfo[1] ?? '');

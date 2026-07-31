@@ -15,6 +15,13 @@
   --board-size: 290px;
   --row-gap: 6px;
   --col-gap: 16px;
+  /*
+   * Reserved-card thumbnails are sized from the viewport, NOT from --card-w. Deriving them from the
+   * card size made the player strips' height depend on the card size, which is itself derived from
+   * the height left over after the strips -- a feedback loop that shifted card widths by a pixel or
+   * two whenever a card was reserved.
+   */
+  --thumb-w: clamp(32px, 4.4vh, 50px);
   --gem: clamp(16px, 2.5vh, 26px);
   display: flex;
   flex-direction: column;
@@ -195,7 +202,7 @@
   width: var(--royal-w);
 }
 .card--small {
-  width: calc(var(--card-w) * 0.6);
+  width: var(--thumb-w);
 }
 .card--detail {
   width: clamp(76px, 11vh, 116px);
@@ -384,7 +391,14 @@
  * and the board visibly resized on every move. A calm, stable board is worth the few pixels this
  * wastes while waiting.
  */
+/*
+ * `display: flex` here is load-bearing, not styling. Without it the list inside is not
+ * height-constrained, so its `overflow-y: auto` never engages and this element's `overflow: hidden`
+ * simply clips the text — the guide looked truncated with no way to scroll to the rest.
+ */
 .sd-guide {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   border-radius: 10px;
@@ -557,9 +571,16 @@
   flex: none;
 }
 
+/*
+ * Fixed height, and its contents do not wrap. The strip gains chips and card thumbnails as a player
+ * acquires things, so letting it size to content meant the board's height budget -- and therefore
+ * every card -- changed as the game progressed.
+ */
 .sd-player {
   padding: clamp(4px, 0.7vh, 8px) 10px;
   flex: none;
+  height: clamp(80px, 11vh, 104px);
+  overflow: hidden;
 }
 .sd-player > header {
   gap: 10px;
@@ -568,6 +589,9 @@
 }
 .sd-player-body {
   gap: clamp(10px, 1.6vw, 20px);
+  flex-wrap: nowrap;
+  overflow: hidden;
+  min-height: 0;
 }
 .sd-tokens svg,
 .sd-stack svg {
@@ -576,8 +600,8 @@
   flex: none;
 }
 .sd-facedown {
-  width: calc(var(--card-w) * 0.6);
-  height: calc(var(--card-w) * 0.6 * 1.452);
+  width: var(--thumb-w);
+  height: calc(var(--thumb-w) * 1.452);
   font-size: 16px;
 }
 
@@ -591,13 +615,26 @@
   gap: 1px 20px;
   font-size: 12.5px;
   line-height: 1.32;
-  /* On a short screen the guide would otherwise crowd out the board it is describing. */
-  /* The list scrolls inside the fixed-height guide; the fade says so. */
+  /* Constrained by the flex chain above, so this actually scrolls rather than being clipped. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  padding-right: 4px;
+}
+.sd-guide ul::-webkit-scrollbar {
+  width: 8px;
+}
+.sd-guide ul::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
 }
 .sd-guide-note {
-  margin: 3px 0 2px;
-  font-size: 12px;
+  margin: 2px 0;
+  font-size: 11.5px;
+  line-height: 1.3;
 }
 
 .sd-bottom {
@@ -688,6 +725,7 @@
   position: relative;
   min-height: 0;
   display: flex;
+  flex: 1 1 auto;
 }
 .sd-guide-list-wrap[data-scrollable='true']::after {
   content: '';
@@ -712,14 +750,22 @@
  * row on purpose: as a column beside the board it filled more of the spare width, but it flipped in
  * and out as the turn guide grew and shrank, resizing the whole board every move.
  */
+/*
+ * Fixed height and no wrapping, on purpose. The bag shows one gem chip per colour still in it, so its
+ * width changes constantly during a match; allowed to wrap, the strip grew to two lines, which moved
+ * the height budget and resized every card mid-game. Playwright reported it as "element is not
+ * stable" -- a card that will not hold still long enough to be clicked.
+ */
 .sd-info {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 22px;
   flex: none;
-  padding: 6px 2px 0;
+  height: clamp(52px, 7vh, 68px);
+  padding: 4px 2px 0;
   border-top: 1px solid var(--line);
+  overflow: hidden;
 }
 .sd-info .sd-bag,
 .sd-info .sd-privileges {
@@ -729,8 +775,12 @@
   flex: 0 0 auto;
 }
 .sd-info .sd-victory {
-  flex: 1 1 300px;
-  max-width: 420px;
+  flex: 0 1 340px;
+  min-width: 0;
+  gap: 2px;
+}
+.sd-info .sd-victory-row {
+  font-size: 11.5px;
 }
 
 /* ---------------------------------------------------------------- sidebar panel */
@@ -740,15 +790,18 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  /* Take the sidebar's spare height, so the guide gets as much of it as possible. */
+  flex: 1 1 auto;
 }
 /*
- * In the sidebar the guide is one narrow column, so it needs room to breathe and its own scroll. The
- * cap matters: left uncapped it starved the move log below it to zero height.
+ * In the sidebar the guide is one narrow column, so it needs the room. It grows into whatever the
+ * fixed panels leave; the move log is pinned to a set height so this cannot starve it.
  */
 .sd-sidebar .sd-guide {
   height: auto;
-  max-height: 36vh;
-  flex: 0 1 auto;
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 190px;
 }
 .sd-sidebar .sd-guide ul {
   grid-template-columns: 1fr;

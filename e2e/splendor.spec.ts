@@ -365,6 +365,16 @@ test.describe('a long game in the browser', () => {
     };
 
     let moves = 0;
+    const cardWidths = new Set<number>();
+    const sampleCardWidth = async () => {
+      const width = await host.evaluate(() => {
+        const card = document.querySelector('.card--pyramid');
+        return card ? Math.round(card.getBoundingClientRect().width) : 0;
+      });
+      if (width > 0) cardWidths.add(width);
+    };
+    await sampleCardWidth();
+
     for (let i = 0; i < 70; i++) {
       const hostToMove = await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible();
       const guestToMove = await guest.locator('.sd-guide', { hasText: 'Your turn' }).isVisible();
@@ -441,9 +451,18 @@ test.describe('a long game in the browser', () => {
       }
       await active.waitForTimeout(60);
       await bothCoherent();
+      await sampleCardWidth();
     }
 
     expect(moves, 'the loop should have played a substantial number of turns').toBeGreaterThan(25);
+
+    /*
+     * Card size must not have moved during the whole match. Anything in the board column whose height
+     * depends on game state will resize every card as the state changes -- the bag row did exactly
+     * that, growing to two lines as the bag filled -- and a board that reflows on every move is both
+     * unpleasant and, for a click, genuinely unhittable.
+     */
+    expect(cardWidths.size, `card width changed mid-match: ${[...cardWidths].join(', ')}`).toBe(1);
     // Both players should have accumulated something: tokens, cards, or score.
     await expect(host.locator('.log li').first()).toBeVisible();
     expect((await host.locator('.log li').count())).toBeGreaterThan(20);
@@ -602,6 +621,32 @@ test.describe('the board fits without scrolling', () => {
         return problems;
       });
       expect(clipped, 'content is clipped by an ancestor').toEqual([]);
+
+      /*
+       * The turn guide is allowed to be taller than its box, but only if it genuinely scrolls. It
+       * once had `overflow-y: auto` on a list whose height nothing constrained, so the property did
+       * nothing and the parent's `overflow: hidden` simply cut the text off — advice a new player
+       * could not read and could not reach.
+       */
+      const guide = await host!.evaluate(() => {
+        const list = document.querySelector('.sd-guide ul') as HTMLElement | null;
+        if (!list) return { present: false, reachable: true, viewport: 0 };
+        const items = [...list.querySelectorAll('li')];
+        list.scrollTop = list.scrollHeight;
+        const last = items[items.length - 1]?.getBoundingClientRect();
+        const box = list.getBoundingClientRect();
+        return {
+          present: true,
+          viewport: Math.round(list.clientHeight),
+          // After scrolling to the bottom, the final bullet must actually be inside the viewport.
+          reachable: !last || (last.top >= box.top - 2 && last.bottom <= box.bottom + 2),
+        };
+      });
+      if (guide.present) {
+        expect(guide.reachable, 'the last line of the turn guide cannot be scrolled into view').toBe(true);
+        // A viewport shorter than a line of text is scrollable in theory and unusable in practice.
+        expect(guide.viewport, 'the turn guide is too short to read').toBeGreaterThan(60);
+      }
 
       await host!.close();
       await guest!.close();

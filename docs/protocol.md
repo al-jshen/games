@@ -216,6 +216,7 @@ Enough for `curl`, a health check, and fetching replays. Everything else is on t
 | `GET` | `/metrics` | live room counts, connections, RSS |
 | `GET` | `/api/games` | game catalog |
 | `POST` | `/api/matches` | `{gameId, options?}` → `{code, matchId, gameId}` |
+| `GET` | `/api/matches` | recent matches, newest first (`?limit=50`). Summaries only — never a seed. |
 | `GET` | `/api/matches/:code` | public room info, for prefetching before connecting |
 | `GET` | `/api/matches/:code/replay` | full record of a **finished** match |
 
@@ -229,7 +230,8 @@ curl -sX POST localhost:8787/api/matches \
 # {"code":"K7M2QP","matchId":"...","gameId":"splendor-duel"}
 ```
 
-A replay is `{seed, gameId, stateVersion, options, seats, actions[]}` — a few hundred bytes that
-reproduce the match exactly. It is the bug-report format, the training corpus, and the CI regression
+A replay is `{seed, gameId, stateVersion, options, seats, actions[]}` — a few KB that reproduce the
+match exactly. Records are upserted into SQLite after every move, so an interrupted match is still
+retrievable and still replays. It is the bug-report format, the training corpus, and the CI regression
 input all at once. The seed is included only once a match is finished, since there is nothing left to
 protect by then.

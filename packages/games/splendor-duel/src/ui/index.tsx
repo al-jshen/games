@@ -357,11 +357,14 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
             ))}
             {view.bag.total === 0 && <span className="muted">empty</span>}
           </div>
-          </div>
-          <div className="sd-privileges" title="Privilege scrolls held by neither player">
+        </div>
+        <div className="sd-privileges" title="Privilege scrolls held by neither player">
           <span className="sd-label">Scrolls above the board</span>
           <span className="sd-scrolls">{'✦'.repeat(view.privilegePool) || '—'}</span>
-          </div>
+        </div>
+        {/* Here rather than in the sidebar: this strip is wide and short, and the sidebar's height is
+            better spent on the turn guide. */}
+        <VictoryTracker player={me} />
       </div>
 
       <div className="sd-bottom">
@@ -750,7 +753,6 @@ export function Sidebar({ view: raw, seat, actors, pending }: BoardProps) {
   }, [view, seat, myTurn]);
 
   if (!view || seat === null) return null;
-  const me = view.players[seat as 0 | 1];
 
   const closeHelp = () => {
     setHelpOpen(false);
@@ -765,9 +767,6 @@ export function Sidebar({ view: raw, seat, actors, pending }: BoardProps) {
         myTurn={myTurn}
         onOpenHelp={() => setHelpOpen(true)}
       />
-      <div className="panel compact">
-        <VictoryTracker player={me} />
-      </div>
       {pending && <span className="muted">Sending…</span>}
       {actors.length === 0 && <span className="muted">Match over.</span>}
     </div>

@@ -2,18 +2,47 @@ import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MatchRecord } from '@games/engine';
 
+/** A match at a glance. Deliberately excludes the record, and therefore the seed. */
+export interface MatchSummary {
+  matchId: string;
+  code: string;
+  gameId: string;
+  createdAt: number;
+  finishedAt?: number;
+  moves: number;
+  winners?: number[];
+  reason?: string;
+}
+
 /**
- * Durable match records, one JSON object per line.
+ * Where match records live. `SqliteReplayStore` is the default; the JSONL and in-memory
+ * implementations below exist for a file-only deployment and for tests.
  *
- * Append-only JSONL rather than SQLite on purpose: a match record is a few hundred bytes, the only
- * queries we need are "by code" and "recent", and avoiding a native module keeps the Alpine image
- * free of a build toolchain. The interface is narrow enough to swap for a real database later
- * without touching anything else.
+ * Records are saved after *every* move, not only when a match finishes, so a crash or a redeploy
+ * mid-game loses nothing. That is what pushed this from a flat file to a table: appending a full copy
+ * per move would grow the file quadratically, whereas an upsert keyed on the match id does not.
  */
 export interface ReplayStore {
   save(record: MatchRecord): Promise<void>;
   load(matchId: string): Promise<MatchRecord | null>;
   findByCode(code: string): Promise<MatchRecord | null>;
+  /** Most recent first. */
+  list(limit?: number): Promise<MatchSummary[]>;
+  close?(): void;
+}
+
+function summarise(record: MatchRecord): MatchSummary {
+  const outcome = record.outcome;
+  return {
+    matchId: record.matchId,
+    code: record.code,
+    gameId: record.gameId,
+    createdAt: record.createdAt,
+    finishedAt: record.finishedAt,
+    moves: record.actions.length,
+    winners: outcome && outcome.status === 'over' ? outcome.winners : undefined,
+    reason: outcome && outcome.status === 'over' ? outcome.reason : undefined,
+  };
 }
 
 export class JsonlReplayStore implements ReplayStore {
@@ -70,6 +99,17 @@ export class JsonlReplayStore implements ReplayStore {
     }
     return null;
   }
+
+  async list(limit = 50): Promise<MatchSummary[]> {
+    const all = await this.all();
+    // Later lines supersede earlier ones for the same match, so collapse before summarising.
+    const latest = new Map<string, MatchRecord>();
+    for (const record of all) latest.set(record.matchId, record);
+    return [...latest.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit)
+      .map(summarise);
+  }
 }
 
 /** Used by tests and by anyone who does not want match history on disk. */
@@ -85,7 +125,17 @@ export class MemoryReplayStore implements ReplayStore {
   }
 
   async findByCode(code: string): Promise<MatchRecord | null> {
-    for (const record of this.records.values()) if (record.code === code) return record;
-    return null;
+    let found: MatchRecord | null = null;
+    for (const record of this.records.values()) {
+      if (record.code === code && (!found || record.createdAt >= found.createdAt)) found = record;
+    }
+    return found;
+  }
+
+  async list(limit = 50): Promise<MatchSummary[]> {
+    return [...this.records.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit)
+      .map(summarise);
   }
 }

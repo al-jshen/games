@@ -33,7 +33,7 @@ const server = await startServer({ port, host, dataDir, webRoot });
 console.log(`games server listening on ${server.url}`);
 console.log(`  websocket   ${server.url.replace('http', 'ws')}/ws`);
 console.log(`  web app     ${webRoot ?? '(not built - run `npm run build` in apps/web)'}`);
-console.log(`  replays     ${dataDir}`);
+console.log(`  replays     ${dataDir} (${process.env.REPLAY_STORE ?? 'sqlite'})`);
 if (!process.env.SESSION_SECRET) {
   console.log('  note: SESSION_SECRET is unset, so a random one was generated.');
   console.log('        Set it to keep reconnect tokens valid across restarts.');

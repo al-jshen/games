@@ -113,10 +113,17 @@ the transport is the only consumer of. `send(socket, { view: state })` does not 
 both that no secret appears in a view and that views are *byte-stable* under permutation of hidden
 state — without that second property, payload size alone leaks information.
 
-**Matches are stored as `{seed, actions[]}`**, a few hundred bytes, not as snapshots. That single
-artifact gives exact bug reproduction, the in-UI move log, and a CI regression corpus. It only works
-because the reducer is deterministic, which is why `Math.random` and `Date.now` are lint errors inside
-game packages.
+**Matches are stored as `{seed, actions[]}`**, a few KB, not as snapshots. That single artifact gives
+exact bug reproduction, the in-UI move log, and a CI regression corpus. It only works because the
+reducer is deterministic, which is why `Math.random` and `Date.now` are lint errors inside game
+packages.
+
+They go into SQLite (`$DATA_DIR/games.db`) via Node's built-in `node:sqlite`, so there is still no
+native module and no build toolchain in the image. A record is upserted after **every move**, not just
+when a match ends — otherwise a crash or a redeploy would silently discard every game in progress,
+which with `restart: unless-stopped` is a routine occurrence. Live matches are also flushed on
+`SIGTERM`. `GET /api/matches` lists recent games; `GET /api/matches/:code/replay` returns a finished
+one in full.
 
 **Reconnecting is expected.** Session tokens are stateless HMACs kept in `localStorage`, so a refresh
 or a dropped tunnel reclaims the same seat, and a server restart with the same secret still honours

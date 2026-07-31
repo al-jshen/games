@@ -91,8 +91,10 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
           conn.send({ t: 'over', snapshot: room.snapshot(holder.seat) });
         }
       }
-      void room.persist(deps.store).catch(() => undefined);
     }
+    // After *every* move, not just the last one. The store upserts on match id, so this is cheap and
+    // idempotent, and it means an interrupted match is still on disk to replay.
+    void room.persist(deps.store).catch(() => undefined);
   };
 
   const joinRoom = (ws: WebSocket, state: SocketState, room: Room, name: string): void => {

@@ -1,8 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { replay } from '@games/engine';
+import { ticTacToe } from '@games/tic-tac-toe';
+import { afterAll, beforeAll, describe, expect, it, test } from 'vitest';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '@games/protocol';
 import type { ServerFrame } from '@games/protocol';
 import { MemoryReplayStore } from '../src/replay-store.js';
+import { SqliteReplayStore } from '../src/sqlite-store.js';
 import { startServer, type RunningServer } from '../src/server.js';
 
 /**
@@ -369,5 +375,90 @@ describe('http surface', () => {
     });
     expect(bad.status).toBe(400);
     expect((await fetch(`${server.url}/api/matches/ZZZZZZ`)).status).toBe(404);
+  });
+});
+
+
+describe('match records survive', () => {
+  /**
+   * The claim under test: a match is on disk after every move, not only when it ends. Before this,
+   * records were written on finish or when a room was swept, so a redeploy — routine with
+   * `restart: unless-stopped` — silently discarded every game in progress.
+   */
+  test('an interrupted match is still on disk, and replays exactly', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'games-durability-'));
+    const dbFile = join(dir, 'games.db');
+    let store = new SqliteReplayStore(dbFile);
+    const interrupted = await startServer({
+      port: 0,
+      host: '127.0.0.1',
+      webRoot: null,
+      store,
+      sessionSecret: 'durability-secret-long-enough',
+      quiet: true,
+    });
+    const url = `${interrupted.url.replace('http', 'ws')}/ws`;
+
+    try {
+      const host = await TestClient.connect(url);
+      await host.hello();
+      host.send({ t: 'create', gameId: 'tic-tac-toe' });
+      const joined = await host.next('joined');
+
+      const guest = await TestClient.connect(url);
+      await guest.hello();
+      guest.send({ t: 'join', code: joined.code });
+      await guest.next('joined');
+      await host.next('sync', (f) => f.t === 'sync' && f.snapshot.players.length === 2);
+
+      // Three moves, then walk away mid-match.
+      const script: [TestClient, number][] = [[host, 0], [guest, 4], [host, 1]];
+      let version = 0;
+      for (const [client, cell] of script) {
+        client.send({ t: 'action', expectVersion: version, clientActionId: `d${cell}`, action: { t: 'place', cell } });
+        const applied = await client.next('applied', (f) => f.t === 'applied' && f.snapshot.version === version + 1);
+        version = applied.snapshot.version;
+      }
+
+      // Already durable, with no shutdown and no finished match.
+      const midMatch = await store.load(joined.matchId);
+      expect(midMatch, 'an in-progress match should already be saved').not.toBeNull();
+      expect(midMatch?.actions).toHaveLength(3);
+      expect(midMatch?.outcome).toBeUndefined();
+
+      host.close();
+      guest.close();
+      await interrupted.close();
+
+      // A brand-new process reads it back and can reconstruct the position.
+      store = new SqliteReplayStore(dbFile);
+      const reloaded = await store.load(joined.matchId);
+      expect(reloaded?.actions).toHaveLength(3);
+      const { state } = replay(ticTacToe, reloaded!);
+      expect(state.board.filter((c) => c !== null)).toHaveLength(3);
+      expect(state.board[0]).toBe('x');
+      expect(state.board[4]).toBe('o');
+
+      // And it shows up in the listing without exposing the seed.
+      const list = await store.list();
+      expect(list.map((m) => m.matchId)).toContain(joined.matchId);
+      expect(JSON.stringify(list)).not.toContain(reloaded!.seed);
+      store.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('the HTTP listing shows recent matches and never a seed', async () => {
+    const res = await fetch(`${server.url}/api/matches?limit=10`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { matches: { matchId: string; code: string; moves: number }[] };
+    expect(Array.isArray(body.matches)).toBe(true);
+    // Earlier tests in this file played matches, so there is something to see.
+    expect(body.matches.length).toBeGreaterThan(0);
+    for (const match of body.matches) {
+      expect(match).not.toHaveProperty('seed');
+      expect(match).not.toHaveProperty('record');
+    }
   });
 });

@@ -73,7 +73,8 @@ certificates too.
 | `SESSION_SECRET` | random per boot | **Set this.** Reconnect tokens are HMACs over it, so a random one means every restart evicts players from live matches. |
 | `PORT` | `8787` | |
 | `HOST` | `0.0.0.0` | |
-| `DATA_DIR` | `/data` | Replay logs, as append-only JSONL. Mounted as a volume. |
+| `DATA_DIR` | `/data` | Match records. Bind-mounted, so back this up if you want history. |
+| `REPLAY_STORE` | `sqlite` | `sqlite` (`$DATA_DIR/games.db`), `jsonl` (append-only file), or `memory`. |
 | `WEB_ROOT` | `/app/web` | Set to empty to serve API and WebSocket only. |
 
 ## Operating it
@@ -81,10 +82,12 @@ certificates too.
 - `GET /healthz` — `{ok, rooms, uptime}`. The image has a `HEALTHCHECK` wired to it.
 - `GET /metrics` — live room counts by status, open connections, RSS. Worth graphing: a slow room leak
   is invisible until the process runs out of memory.
-- Replays accumulate in `$DATA_DIR/matches.jsonl` at a few hundred bytes per match. Rotate it if you
-  ever care; nothing reads old lines except the replay endpoint.
-- `SIGTERM` closes sockets and the listener before exiting, and `tini` in the image forwards it, so
-  `docker compose down` is graceful.
+- Match records live in `$DATA_DIR/games.db` (plus the WAL sidecar files) at a few KB each, upserted
+  after every move. `GET /api/matches?limit=50` lists them; `GET /api/matches/:code/replay` returns one
+  in full. Back up the directory to keep history — SQLite is fine to copy while stopped, and
+  `sqlite3 games.db ".backup out.db"` is the safe way while running.
+- `SIGTERM` flushes every match in progress, then closes sockets and the listener. `tini` in the image
+  forwards the signal, so `docker compose down` and a redeploy are both graceful.
 
 ## Scaling
 
