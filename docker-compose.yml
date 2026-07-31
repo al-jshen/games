@@ -21,9 +21,6 @@ services:
     networks:
       - caddy
 
-volumes:
-  games-data:
-
 networks:
   caddy:
     name: caddy_net
