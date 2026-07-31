@@ -11,7 +11,7 @@ services:
       PORT: "${GAMES_PORT:-8787}"
       DATA_DIR: /data
     volumes:
-      - games-data:/data
+      - ./data:/data
     restart: unless-stopped
     # Turn-based traffic is tiny; this is generous.
     mem_limit: 512m
@@ -20,8 +20,6 @@ services:
     # which drops the published port entirely.
     networks:
       - caddy
-
-
 
 volumes:
   games-data:
