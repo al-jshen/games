@@ -1,0 +1,41 @@
+{
+  "name": "games",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/protocol",
+    "packages/engine",
+    "packages/games/*",
+    "packages/client-sdk",
+    "apps/server",
+    "apps/web",
+    "tools/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -b packages/engine packages/protocol packages/client-sdk packages/games/tic-tac-toe packages/games/splendor-duel apps/server && tsc -p packages/games/splendor-duel/tsconfig.ui.json && tsc -p packages/games/tic-tac-toe/tsconfig.ui.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node scripts/dev.mjs",
+    "start": "node apps/server/dist/main.js",
+    "cards": "npm run -w @games/tool-scrape-cards start",
+    "verify:spiral": "npm run -w @games/tool-verify-spiral start",
+    "lint": "eslint .",
+    "clean": "rm -rf packages/*/dist packages/games/*/dist apps/*/dist tools/*/dist apps/web/dist *.tsbuildinfo",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "eslint": "^9.17.0",
+    "fast-check": "^3.23.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

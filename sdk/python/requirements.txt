@@ -1,0 +1,3 @@
+# Recommended. Without it the SDK falls back to its bundled standard-library WebSocket client,
+# which speaks the same protocol but is far less battle-tested. Needs >=13 for the sync client.
+websockets>=13

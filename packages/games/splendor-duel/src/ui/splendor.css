@@ -1,0 +1,689 @@
+/* Splendor Duel board. Colours come from the app's custom properties so the board inherits theme. */
+
+/*
+ * The board is height-bounded: it fills the space it is given and never causes the page to scroll.
+ * Everything with a size is expressed in `vh` clamps, so on a short screen the cards, the token grid
+ * and the gems all shrink together rather than pushing content off the bottom.
+ *
+ * --card-w is the one knob; card height follows from the SVG aspect ratio (1 : 1.452).
+ */
+.sd {
+  /* Only used for the things that are not flex-sized: reserved-card thumbnails, gems, the deck
+     column's minimum. The pyramid and the token board size themselves from the space they are
+     given, which is what makes overflow impossible rather than merely unlikely. */
+  --card-w: clamp(44px, 8.2vh, 96px);
+  --gem: clamp(16px, 2.5vh, 26px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.8vh, 10px);
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  /* Clip rather than overlap. If space ever does run out, a clipped edge is recoverable; panels
+     painting on top of the board silently steal its clicks, which is not. */
+  overflow: hidden;
+}
+
+/*
+ * The board gets first claim on vertical space. Its `min-height` is roughly what its contents
+ * actually need, so flex will not shrink it below that -- previously it had `min-height: 0`, happily
+ * shrank to nothing on a short screen, and its children spilled out over the panels below.
+ *
+ * The turn guide is the discretionary consumer, so that is what yields (its bullet list scrolls).
+ */
+.sd-middle {
+  display: flex;
+  gap: clamp(8px, 1.6vw, 20px);
+  /* `stretch`, not `flex-start`: this row is a horizontal flex container, so its children only get a
+     definite height from the cross-axis stretch. With `flex-start` the pyramid rows had no height to
+     divide, fell back to their minimum, and left the cards tiny with a gap below them. */
+  align-items: flex-start;
+  /*
+   * `flex: 1 1 auto` with the default `min-height: auto` is what stops flex shrinking this below its
+   * content, so the board keeps its size and the turn guide (which scrolls) yields instead.
+   *
+   * Note there is deliberately no `overflow: hidden` here. Setting it would replace that automatic
+   * minimum with zero -- per the flexbox spec, the automatic minimum size only applies while overflow
+   * is visible -- which silently clipped the level-1 card row and the bottom of the token board.
+   */
+  flex: 1 1 auto;
+}
+
+/*
+ * The pyramid takes the height it is given and splits it between three rows; the cards then size
+ * themselves to their row. Nothing here is a guess about how tall the viewport is, so the board
+ * cannot overflow no matter what else is on screen.
+ */
+.sd-pyramid {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(3px, 0.7vh, 8px);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.sd-row {
+  display: flex;
+  gap: clamp(3px, 0.6vw, 8px);
+  align-items: flex-start;
+  flex: none;
+}
+
+.sd-deck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: calc(var(--card-w) * 0.56);
+  height: calc(var(--card-w) * 1.452);
+  min-width: 32px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  flex: none;
+}
+.sd-deck-level {
+  font-size: clamp(9px, 1.2vh, 11px);
+  color: var(--muted);
+}
+.sd-deck-count {
+  font-size: clamp(13px, 2vh, 19px);
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+/* Royals sit beside the token board rather than under the pyramid: as a fourth card row they cost
+   ~110px of height, which is most of what made the board overflow a laptop screen. */
+/*
+ * Must not shrink or wrap. With `min-width: 0` and wrapping it collapsed to one card per line, went
+ * 400px tall, and squeezed the board down to its minimum -- the whole layout unravelled from here.
+ */
+.sd-royals {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+.sd-right {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.9vh, 10px);
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+  align-items: flex-start;
+}
+
+/* Bag, scrolls and royals share one horizontal strip. As its own row the royals cost ~80px of
+   height and were the thing that got clipped behind the player panel. */
+.sd-supply {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 0 2px;
+}
+.sd-bag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.sd-bag-gems {
+  display: flex;
+  gap: 2px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.sd-privileges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.sd-scrolls {
+  font-size: 18px;
+  color: #e8c169;
+  letter-spacing: 3px;
+}
+.sd-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- cards */
+
+.card {
+  border-radius: 8px;
+  display: block;
+  height: auto;
+  flex: none;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+/* Named sizes, all derived from --card-w so one clamp scales the whole board. */
+/*
+ * Width-driven, from a viewport-height clamp -- deliberately not `height: 100%` plus `aspect-ratio`.
+ * That reads better but is circular inside flex: the row's height is not known when the parent's
+ * intrinsic width is computed, so the pyramid collapses to near-zero width and its cards spill
+ * sideways over the token board, stealing its clicks.
+ */
+.card--pyramid {
+  width: var(--card-w);
+  height: auto;
+}
+.card--royal {
+  width: calc(var(--card-w) * 0.62);
+}
+.card--small {
+  width: calc(var(--card-w) * 0.6);
+}
+.card--detail {
+  width: clamp(76px, 11vh, 116px);
+}
+.card-clickable {
+  cursor: pointer;
+}
+.card-clickable:hover,
+.card-clickable:focus-visible {
+  transform: translateY(-3px);
+  outline: none;
+  filter: brightness(1.12);
+}
+.card-affordable {
+  outline: 2px solid #6fbf7f;
+  outline-offset: 1px;
+}
+.card-selected {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+.card-dimmed {
+  filter: grayscale(0.6) brightness(0.7);
+}
+
+/* ---------------------------------------------------------------- token board */
+
+.token-board {
+  width: clamp(186px, 30vh, 300px);
+  height: auto;
+  flex: none;
+}
+
+.token-board .cell rect {
+  transition: stroke 120ms ease, fill 120ms ease;
+}
+.token-board .cell-selectable {
+  cursor: pointer;
+}
+.token-board .cell-selectable:hover rect,
+.token-board .cell-selectable:focus-visible rect {
+  stroke: var(--accent);
+  outline: none;
+}
+.token-board .cell-selected rect {
+  fill: rgba(240, 200, 96, 0.18);
+}
+.token-board .cell-preview rect {
+  fill: rgba(240, 200, 96, 0.07);
+}
+
+/* ---------------------------------------------------------------- player strips */
+
+.sd-player {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+}
+.sd-player-turn {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(240, 200, 96, 0.25) inset;
+}
+.sd-player > header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.sd-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.sd-score.over {
+  color: #e8896f;
+  font-weight: 700;
+}
+.sd-player-body {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.sd-tokens,
+.sd-stacks {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.sd-stack {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+}
+.sd-stack .win-close {
+  color: #6fbf7f;
+  font-weight: 700;
+}
+.sd-nobonus {
+  color: var(--muted);
+}
+.sd-reserved {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sd-facedown {
+  width: 58px;
+  height: 84px;
+  border-radius: 6px;
+  border: 1px dashed var(--line);
+  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.04) 0 6px, transparent 6px 12px);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 20px;
+}
+
+/* ---------------------------------------------------------------- action bar */
+
+.sd-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+}
+.prompt {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.sd-buy {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.sd-buy-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+}
+.sd-buy-body h4 {
+  margin: 0;
+}
+.sd-pay,
+.sd-swaps,
+.sd-wild {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.small {
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- turn guide */
+
+.sd-guide {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 10px 12px;
+  /* Shrinks before the board does. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.sd-guide > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sd-guide-note {
+  margin: 6px 0 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.sd-guide ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.sd-guide li.urgent {
+  color: var(--accent);
+}
+.sd-guide li.urgent .muted {
+  color: #d8c9a4;
+}
+.sd-warn {
+  font-size: 12px;
+  color: #e8c169;
+}
+
+/* ---------------------------------------------------------------- victory tracker */
+
+.sd-victory {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sd-victory-row {
+  display: grid;
+  grid-template-columns: 108px 1fr 42px;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.sd-victory-label {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sd-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.sd-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+.sd-bar-fill.done {
+  background: #6fbf7f;
+}
+.sd-victory-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- help overlay */
+
+.sd-help-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 50;
+}
+.sd-help {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-width: 900px;
+  width: 100%;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.sd-help > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.sd-help > header h3 {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+.sd-help-body {
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px 22px;
+}
+.sd-help-body h4 {
+  margin: 0 0 5px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.sd-help-body ul {
+  margin: 0;
+  padding-left: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.sd-help > footer {
+  padding: 9px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.sd-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sd-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.sd-stepper-label {
+  font-size: 12px;
+  color: var(--text);
+  min-width: 62px;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- compaction */
+
+/* Gem chips scale with the same viewport-derived knob as the cards. */
+.gem-chip {
+  width: var(--gem);
+  height: var(--gem);
+  flex: none;
+}
+
+.sd-player {
+  padding: clamp(4px, 0.7vh, 8px) 10px;
+  flex: none;
+}
+.sd-player > header {
+  gap: 10px;
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+.sd-player-body {
+  gap: clamp(10px, 1.6vw, 20px);
+}
+.sd-tokens svg,
+.sd-stack svg {
+  width: var(--gem);
+  height: var(--gem);
+  flex: none;
+}
+.sd-facedown {
+  width: calc(var(--card-w) * 0.6);
+  height: calc(var(--card-w) * 0.6 * 1.452);
+  font-size: 16px;
+}
+
+/* The turn guide is the other big consumer of height. Two columns halves it on a wide screen. */
+.sd-guide {
+  padding: clamp(5px, 0.9vh, 10px) 12px;
+}
+.sd-guide ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 1px 20px;
+  font-size: 12.5px;
+  line-height: 1.32;
+  /* On a short screen the guide would otherwise crowd out the board it is describing. */
+  max-height: min(22vh, 184px);
+  overflow-y: auto;
+}
+.sd-guide-note {
+  margin: 3px 0 2px;
+  font-size: 12px;
+}
+
+.sd-bottom {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  flex-wrap: wrap;
+  flex: none;
+}
+.sd-bottom .sd-player {
+  flex: 1 1 460px;
+  min-width: 0;
+}
+.sd-bottom .sd-victory {
+  flex: 0 1 280px;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 6px 10px;
+}
+
+.sd-actions {
+  padding: clamp(4px, 0.8vh, 8px) 10px;
+  position: static;
+  flex: none;
+}
+
+/*
+ * The card panel floats over the board instead of sitting in the flow. In the flow it added ~150px
+ * whenever you clicked a card, which is exactly when you can least afford to lose the board.
+ */
+.sd-buy {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  max-width: min(420px, 92%);
+  padding: 10px;
+  gap: 10px;
+}
+.sd-buy-body {
+  min-width: 0;
+  gap: 5px;
+  font-size: 13px;
+}
+.sd-buy-body h4 {
+  font-size: 14px;
+}
+.sd-pay svg,
+.sd-swaps svg {
+  width: var(--gem);
+  height: var(--gem);
+}
+
+/* Below this the board simply cannot fit; give the page its scroll back rather than clip. */
+@media (max-height: 620px) {
+  .sd {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Narrow screens get their scroll back: there is no way to fit this into a phone viewport, and a
+     cramped board is worse than a scrolling one. */
+  .sd {
+    height: auto;
+  }
+  .sd-buy {
+    position: static;
+    max-width: none;
+  }
+}
+
+/* ---------------------------------------------------------------- polish */
+
+.sd-deck-reserve {
+  padding: 0 4px;
+  line-height: 1.4;
+  font-size: 13px;
+}
+
+/*
+ * The guide is the element that yields height to the board, so on a shorter screen its list scrolls.
+ * A fade at the bottom edge says so; without it a sentence simply stops mid-word and reads as broken.
+ * Only drawn when there is actually more to see.
+ */
+.sd-guide-list-wrap {
+  position: relative;
+  min-height: 0;
+  display: flex;
+}
+.sd-guide-list-wrap[data-scrollable='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 20px;
+  background: linear-gradient(to top, var(--panel) 20%, transparent);
+  pointer-events: none;
+}
+
+/* Enough room for "Best colour (green)" without an ellipsis. */
+.sd-victory-row {
+  grid-template-columns: 128px 1fr 44px;
+}

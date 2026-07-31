@@ -1,0 +1,27 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+
+# The server's runtime replay directory, at the repo root only. Deliberately anchored with a
+# leading slash: a bare `data/` also swallows packages/games/splendor-duel/data/cards.json, which
+# is a generated-but-reviewable source artefact that belongs in the repo.
+/data/
+
+# scratch caches for one-off data/asset derivation tools
+.cache/
+tools/*/.cache/
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+
+.DS_Store
+
+# playwright
+test-results/
+playwright-report/
+blob-report/

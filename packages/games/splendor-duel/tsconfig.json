@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM"]
+  },
+  // The `./ui` entry is consumed only by a bundler (it imports CSS and JSX), so it is typechecked
+  // separately by tsconfig.ui.json and never emitted here. That also keeps React out of the
+  // server's dependency graph.
+  "include": ["src/**/*"],
+  "exclude": ["src/ui/**"],
+  "references": [{ "path": "../../engine" }]
+}

@@ -1,0 +1,374 @@
+:root {
+  --bg: #14100f;
+  --panel: #1e1917;
+  --panel-2: #262020;
+  --line: #3a302c;
+  --text: #efe6d8;
+  --muted: #a2968a;
+  --accent: #f0c860;
+  --danger: #e8896f;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+h1 {
+  font-size: 24px;
+  margin: 0 0 6px;
+}
+h2 {
+  font-size: 18px;
+  margin: 0 0 10px;
+}
+h3 {
+  font-size: 14px;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--danger);
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button {
+  font: inherit;
+  padding: 7px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+button.active {
+  border-color: var(--accent);
+  background: rgba(240, 200, 96, 0.14);
+}
+button.mini {
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+input {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #120e0d;
+  color: var(--text);
+}
+input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/*
+ * The shell is height-bounded so a match never scrolls the page: the room fills what is left below
+ * the top bar, and the only region allowed to scroll internally is the move log. Narrow screens opt
+ * back out (see the media query at the bottom) because no amount of scaling fits a board on a phone.
+ */
+.app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.brand {
+  background: none;
+  border: none;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  padding: 0;
+}
+
+.badge {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.badge-connected {
+  color: #6fbf7f;
+  border-color: #33553c;
+}
+.badge-reconnecting {
+  color: var(--accent);
+  border-color: #6b5a2c;
+}
+.badge-closed {
+  color: var(--danger);
+  border-color: #6b3a2c;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 16px;
+}
+.panel.compact {
+  padding: 12px;
+}
+
+.lobby {
+  max-width: 760px;
+  margin: 28px auto;
+  padding: 0 16px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 280px;
+  margin-top: 12px;
+}
+.field span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.game-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.game-card h3 {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 16px;
+  color: var(--text);
+  margin: 0;
+}
+.game-card p {
+  margin: 0;
+  font-size: 13px;
+}
+.game-card .meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.game-card button {
+  margin-top: auto;
+}
+
+.join {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.code-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  width: 190px;
+  text-align: center;
+}
+
+.room {
+  display: flex;
+  gap: 14px;
+  padding: 12px 14px;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar {
+  width: 236px;
+  flex: 0 0 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.board-area {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Anchors the floating card panel. */
+  position: relative;
+}
+
+.banner {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 14px;
+}
+.banner.error {
+  border-color: #6b3a2c;
+}
+
+.share-highlight {
+  border-color: var(--accent);
+}
+.code-display {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(20px, 3.2vh, 30px);
+  letter-spacing: 0.18em;
+  margin: 2px 0 8px;
+  color: var(--accent);
+  user-select: all;
+}
+
+.players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.players li {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 14px;
+}
+.players li.offline .pname {
+  color: var(--muted);
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 9px;
+  background: var(--muted);
+}
+.dot.seat-0 {
+  background: #6fa8e8;
+}
+.dot.seat-1 {
+  background: #e8a86f;
+}
+.turn-flag {
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid #6b5a2c;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.result h3 {
+  color: var(--accent);
+  font-size: 18px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.log {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  font-size: 12px;
+}
+.log li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  color: var(--muted);
+}
+.log li .dot {
+  margin-top: 5px;
+}
+
+/* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
+@media (max-height: 620px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Give scrolling back on narrow screens, and stack the sidebar above the board. */
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .room {
+    flex-wrap: wrap;
+  }
+  .sidebar {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .log ol {
+    max-height: 240px;
+  }
+}

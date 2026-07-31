@@ -1,0 +1,35 @@
+.ttt {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ttt-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 92px);
+  grid-template-rows: repeat(3, 92px);
+  gap: 6px;
+}
+
+.ttt-cell {
+  font-size: 40px;
+  font-weight: 800;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.ttt-cell:disabled {
+  cursor: default;
+}
+.ttt-cell:not(:disabled):hover {
+  border-color: var(--accent);
+}
+.ttt-x {
+  color: #6fa8e8;
+}
+.ttt-o {
+  color: #e8a86f;
+}

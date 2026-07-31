@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/engine" },
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/games/splendor-duel" },
+    { "path": "../../packages/games/tic-tac-toe" }
+  ]
+}
