@@ -29,13 +29,15 @@ games.jshen.net {
 }
 ```
 
-Bring the stack up on the proxy's network:
+Bring it up:
 
 ```bash
-export SESSION_SECRET="$(openssl rand -base64 32)"
-export PROXY_NETWORK=caddy_default          # `docker network ls` to find the real name
-docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+SESSION_SECRET="$(openssl rand -base64 32)" docker compose up -d --build
 ```
+
+`docker-compose.yml` joins the external network `caddy_net` and publishes no host port, so the
+container is reachable only from the proxy network. Create that network once if it does not exist
+(`docker network create caddy_net`) and attach your Caddy container to it too.
 
 Three things to get right:
 
@@ -44,9 +46,12 @@ Three things to get right:
    proxy entry have to agree, and a mismatch shows up only as a 502.
 2. **The hostname is the container name.** `docker-compose.yml` sets `container_name: games_server`,
    which is what makes `reverse_proxy games_server:8787` resolve. Rename one and rename both.
-3. **Caddy and this container must share a Docker network.** If Caddy lives in its own compose
-   project, that network is external from here — hence `PROXY_NETWORK` above. Without it Caddy cannot
-   resolve the name at all.
+3. **Caddy and this container must share the network.** If Caddy lives in its own compose project,
+   attach it to `caddy_net` as an external network there as well; otherwise Caddy cannot resolve the
+   name at all.
+
+Replay logs land in `./data` next to the compose file (bind-mounted to `/data`), which `.gitignore`
+excludes. Back that directory up if you care about match history.
 
 `encode gzip` is fine to leave on; it applies to ordinary HTTP responses and does not touch WebSocket
 frames. The server disables `permessage-deflate` deliberately — frames are a few KB, so compressing
