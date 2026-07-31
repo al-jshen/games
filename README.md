@@ -59,12 +59,6 @@ of their matches.
 
 Behind a Caddy container on a shared Docker network:
 
-```bash
-export SESSION_SECRET="$(openssl rand -base64 32)"
-export PROXY_NETWORK=caddy_default        # `docker network ls` to find the real name
-docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
-```
-
 ```
 games.example.net {
     encode gzip
