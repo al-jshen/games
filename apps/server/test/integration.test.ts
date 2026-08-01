@@ -4,9 +4,8 @@ import { join } from 'node:path';
 import { replay } from '@games/engine';
 import { ticTacToe } from '@games/tic-tac-toe';
 import { afterAll, beforeAll, describe, expect, it, test } from 'vitest';
-import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '@games/protocol';
-import type { ServerFrame } from '@games/protocol';
+import { TestClient } from './client.js';
 import { MemoryReplayStore } from '../src/replay-store.js';
 import { SqliteReplayStore } from '../src/sqlite-store.js';
 import { startServer, type RunningServer } from '../src/server.js';
@@ -33,68 +32,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.close();
 });
-
-/** A tiny client that queues frames so tests can await the next one of a given type. */
-class TestClient {
-  private readonly ws: WebSocket;
-  private readonly queue: ServerFrame[] = [];
-  private readonly waiters: { match: (f: ServerFrame) => boolean; resolve: (f: ServerFrame) => void }[] = [];
-  sessionToken: string | null = null;
-  seat: number | null = null;
-
-  private constructor(url: string) {
-    this.ws = new WebSocket(url, { perMessageDeflate: false });
-    this.ws.on('message', (raw) => {
-      const frame = JSON.parse(String(raw)) as ServerFrame;
-      if (frame.t === 'joined') {
-        this.sessionToken = frame.sessionToken;
-        this.seat = frame.seat;
-      }
-      const idx = this.waiters.findIndex((w) => w.match(frame));
-      if (idx >= 0) {
-        const [waiter] = this.waiters.splice(idx, 1);
-        waiter!.resolve(frame);
-      } else {
-        this.queue.push(frame);
-      }
-    });
-  }
-
-  static async connect(url: string): Promise<TestClient> {
-    const client = new TestClient(url);
-    await new Promise<void>((done, fail) => {
-      client.ws.once('open', () => done());
-      client.ws.once('error', fail);
-    });
-    return client;
-  }
-
-  send(frame: unknown): void {
-    this.ws.send(JSON.stringify(frame));
-  }
-
-  /** Wait for the next frame of type `t` (checking already-queued frames first). */
-  next<T extends ServerFrame['t']>(t: T, extra?: (f: ServerFrame) => boolean): Promise<Extract<ServerFrame, { t: T }>> {
-    const match = (f: ServerFrame) => f.t === t && (!extra || extra(f));
-    const idx = this.queue.findIndex(match);
-    if (idx >= 0) {
-      const [frame] = this.queue.splice(idx, 1);
-      return Promise.resolve(frame as Extract<ServerFrame, { t: T }>);
-    }
-    return new Promise((resolve) => {
-      this.waiters.push({ match, resolve: (f) => resolve(f as Extract<ServerFrame, { t: T }>) });
-    });
-  }
-
-  async hello(sessionToken?: string): Promise<Extract<ServerFrame, { t: 'hello_ok' }>> {
-    this.send({ t: 'hello', protocolVersion: PROTOCOL_VERSION, ...(sessionToken ? { sessionToken } : {}) });
-    return this.next('hello_ok');
-  }
-
-  close(): void {
-    this.ws.close();
-  }
-}
 
 const wsUrl = () => `${server.url.replace('http', 'ws')}/ws`;
 

@@ -82,10 +82,10 @@ certificates too.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `SESSION_SECRET` | random per boot | **Set this.** Reconnect tokens are HMACs over it, so a random one means every restart evicts players from live matches. |
+| `SESSION_SECRET` | random per boot | **Set this, and keep it stable.** Seat tokens are HMACs over it. Change it and every player is locked out of every match in progress, including ones stored on disk — the games survive, but nobody can prove which seat was theirs. |
 | `PORT` | `8787` | |
 | `HOST` | `0.0.0.0` | |
-| `DATA_DIR` | `/data` | Match records. Bind-mounted, so back this up if you want history. |
+| `DATA_DIR` | `/data` | Match records. This is also what makes games resumable across a restart, so it wants to be a real volume, not a container-lifetime directory. |
 | `REPLAY_STORE` | `sqlite` | `sqlite` (`$DATA_DIR/games.db`), `jsonl` (append-only file), or `memory`. |
 | `ACTION_RATE_LIMIT` | `1000` | Actions per socket per second. A flood guard, not a pace limiter — see the performance notes in `docs/protocol.md`. |
 | `WEB_ROOT` | `/app/web` | Set to empty to serve API and WebSocket only. |
@@ -101,6 +101,11 @@ certificates too.
   `sqlite3 games.db ".backup out.db"` is the safe way while running.
 - `SIGTERM` flushes every match in progress, then closes sockets and the listener. `tini` in the image
   forwards the signal, so `docker compose down` and a redeploy are both graceful.
+- **Games survive a redeploy.** Rooms are held in memory for an hour after the last player disconnects
+  and then evicted; the record stays, and the match is rebuilt from it whenever somebody comes back.
+  So a restart is not visible to players beyond a reconnect — as long as `SESSION_SECRET` and
+  `DATA_DIR` both persist. With `REPLAY_STORE=memory` nothing is durable and a restart really does
+  discard every game.
 
 ## Scaling
 

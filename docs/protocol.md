@@ -47,7 +47,10 @@ authoritative schema; this file is prose over it.
 { "t": "hello", "protocolVersion": 1, "sessionToken": "optional" }
 ```
 Must be the first frame. A `sessionToken` from a previous `joined` reclaims that seat — this is how a
-browser refresh or a dropped connection resumes. A version mismatch is answered with
+browser refresh, a dropped connection, or a return days later resumes. The match does not have to be
+resident in memory: if it has been evicted, or the server has restarted, the record is loaded and the
+actions replayed to rebuild it before the token is checked. Tokens do not expire, so the only thing
+that invalidates one is a change of `SESSION_SECRET`. A version mismatch is answered with
 `error{code:"PROTOCOL_MISMATCH"}` and the client should reload; without this check a deploy silently
 breaks every open tab.
 
@@ -235,6 +238,32 @@ match exactly. Records are upserted into SQLite after every move, so an interrup
 retrievable and still replays. It is the bug-report format, the training corpus, and the CI regression
 input all at once. The seed is included only once a match is finished, since there is nothing left to
 protect by then.
+
+## Resuming a match
+
+A match is durable from the moment both seats are filled — before anyone has moved — and is rewritten
+after every move. What is stored is the seed plus the action log, not a snapshot, so resuming means
+replaying: the rebuilt state is byte-identical, hidden information included, and the move log comes
+back with it because the effects fall out of the replay.
+
+Two ways back in:
+
+- **`hello` with a `sessionToken`.** The normal path, and the only one that gets you a seat in a match
+  that already has two players.
+- **`join` with a code.** Rebuilds the match too, but a resumed match is rebuilt *full*, so this
+  answers `error{code:"MATCH_FULL"}` unless a seat is genuinely open. Losing your token means losing
+  your seat; that is deliberate, since the code is the only other thing identifying you and it is
+  meant to be shareable.
+
+Two things a resume does not carry over:
+
+- **Idempotency keys.** The `clientActionId` cache is per-room and does not survive eviction, so an
+  action resent across a resume could apply twice. `expectVersion` is what stops it: a resend carries
+  the version from before the break and is rejected as `STALE`. Clients drop pending actions on `sync`
+  anyway.
+- **A match whose rules have changed.** If a game module's `stateVersion` no longer matches the
+  record's, the server refuses to resume rather than replaying old actions through new rules, which
+  would produce a plausible and wrong board. That reads as `NO_SUCH_MATCH`.
 
 ## Performance
 

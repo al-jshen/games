@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
+import type { MatchRecord } from '@games/engine';
 import { ErrorCodes, normalizeCode } from '@games/protocol';
 import { gameCatalog } from './registry.js';
 import type { RoomRegistry } from './rooms.js';
@@ -37,6 +38,11 @@ export interface HttpDeps {
   store: ReplayStore;
   /** Absolute path to the built web app, or `null` to serve API only. */
   webRoot: string | null;
+}
+
+/** A match is over when its record says so; a resident room may or may not exist either way. */
+function isFinished(record: MatchRecord): boolean {
+  return record.finishedAt !== undefined || record.outcome?.status === 'over';
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -169,19 +175,41 @@ export function createRequestHandler(deps: HttpDeps) {
       if (matchInfo && req.method === 'GET') {
         const code = normalizeCode(matchInfo[1] ?? '');
         const room = deps.rooms.byCodeExact(code);
-        if (!room) {
+        if (room) {
+          // Public info only, so the web app can prefetch the right game bundle before connecting.
+          json(res, 200, {
+            code: room.code,
+            matchId: room.matchId,
+            gameId: room.gameId,
+            status: room.status,
+            seatsFilled: room.seats.length,
+            maxSeats: room.maxSeats,
+            version: room.match.version,
+            createdAt: room.createdAt,
+            resumable: true,
+          });
+          return;
+        }
+        /*
+         * Not resident, but possibly on disk. Answered from the record directly rather than by
+         * rebuilding the room: this endpoint is a lookup, and letting an unauthenticated GET force
+         * a replay would make it a cheap way to spend the server's CPU.
+         */
+        const record = await deps.store.findByCode(code);
+        if (!record) {
           json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: `No match with code ${code}` });
           return;
         }
-        // Public info only, so the web app can prefetch the right game bundle before connecting.
         json(res, 200, {
-          code: room.code,
-          matchId: room.matchId,
-          gameId: room.gameId,
-          status: room.status,
-          seatsFilled: room.seats.length,
-          maxSeats: room.maxSeats,
-          version: room.match.version,
+          code: record.code,
+          matchId: record.matchId,
+          gameId: record.gameId,
+          status: record.finishedAt ? 'finished' : 'active',
+          seatsFilled: record.players?.length ?? record.seats.length,
+          maxSeats: record.seats.length,
+          version: record.actions.at(-1)?.version ?? 0,
+          createdAt: record.createdAt,
+          resumable: true,
         });
         return;
       }
@@ -191,13 +219,25 @@ export function createRequestHandler(deps: HttpDeps) {
         const code = normalizeCode(replayInfo[1] ?? '');
         const live = deps.rooms.byCodeExact(code);
         const record = live?.status === 'finished' ? live.match.record : await deps.store.findByCode(code);
-        if (!record) {
+        /*
+         * Finished matches only, and the check is on the *record* rather than on whether a room
+         * happens to be resident.
+         *
+         * Saving after every move put every in-progress match in the store, so the earlier version
+         * of this -- which only consulted `live.status` before falling through to the store -- would
+         * hand out a live match's seed to anyone who knew the code. The seed is precisely what lets
+         * you compute every future shuffle, so that was the whole hidden-information model gone for
+         * the price of a GET.
+         */
+        if (!record || !isFinished(record)) {
           json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: 'No finished match with that code' });
           return;
         }
-        // The seed is what makes a replay reproducible, but handing it out mid-match would leak
-        // every future shuffle. Finished matches have nothing left to protect.
-        json(res, 200, record);
+        // The seed is what makes a replay reproducible, and a finished match has nothing left to
+        // protect. Seat identities are a different matter: they are what session tokens are checked
+        // against, so they stay server-side.
+        const { players: _players, ...shareable } = record;
+        json(res, 200, shareable);
         return;
       }
 

@@ -216,6 +216,39 @@ input:focus {
   margin-top: auto;
 }
 
+.resume-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.resume-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  color: inherit;
+  text-decoration: none;
+}
+.resume-item:hover,
+.resume-item:focus-visible {
+  border-color: var(--accent);
+}
+.resume-title {
+  font-weight: 600;
+}
+.resume-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
 .join {
   display: flex;
   gap: 8px;

@@ -265,6 +265,54 @@ test.describe('session resilience', () => {
     await guest.close();
   });
 
+  test('closing the browser and coming back later resumes the game', async ({ browser }) => {
+    /*
+     * The scenario people actually have: stop playing, close everything, come back another time.
+     *
+     * A reload keeps the page's memory alive in ways a real return does not, so this throws the
+     * whole browser context away and builds a new one from nothing but the saved storage -- which
+     * is what a browser restart leaves you with. The half of the story that happens after the room
+     * has been evicted from the server's memory is covered in apps/server/test/resume.test.ts,
+     * where a sweep and a full server restart can be forced.
+     */
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    const hostToMove = await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible();
+    const active = hostToMove ? host : guest;
+    await active.locator('.token-board .cell-selectable').first().click();
+    await active.getByRole('button', { name: /^Take/ }).click();
+    await expect(active.locator('.log li')).toHaveCount(1);
+
+    // Everything the browser would keep on disk, and nothing else.
+    const saved = await host.context().storageState();
+    await host.context().close();
+    await guest.context().close();
+
+    const returning = await browser.newContext({ storageState: saved });
+    const page = await returning.newPage();
+    await page.goto('/');
+    await expect(page.getByText('Connected')).toBeVisible();
+
+    // The lobby offers the game back, so you do not have to have kept the link.
+    const entry = page.locator('.resume-item', { hasText: code });
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText('Splendor Duel');
+    await entry.click();
+
+    // Same seat, same board, same history.
+    await expect(page.locator('.code-display')).toHaveText(code);
+    await expect(page.locator('.players li', { hasText: 'Ann (you)' })).toBeVisible();
+    await expect(page.locator('.players li')).toHaveCount(2);
+    await expect(page.locator('.log li')).toHaveCount(1);
+    expect(problemsOf(page)).toEqual([]);
+
+    await returning.close();
+  });
+
   test('a deep link joins the match directly', async ({ browser }) => {
     const host = await openPlayer(browser, 'Ann');
     const code = await host

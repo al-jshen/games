@@ -43,7 +43,12 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     rules: {
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      // `ignoreRestSiblings` is what makes `const { secret: _secret, ...rest } = obj` -- the clearest
+      // way to write "everything except this field" -- not read as an unused variable.
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },

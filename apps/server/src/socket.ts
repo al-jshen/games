@@ -60,6 +60,17 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
   const states = new Map<WebSocket, SocketState>();
   const actionLimit = resolveActionLimit(deps.actionRateLimit);
 
+  /**
+   * Write the room's record, without making the caller wait and without letting a store failure
+   * interrupt a live game. Reported rather than swallowed: silently discarding these is how a data
+   * directory that was never writable went unnoticed indefinitely.
+   */
+  const savePoint = (room: Room): void => {
+    void room.persist(deps.store).catch((error: unknown) => {
+      reportStoreError(error, `match ${room.code}`, deps.log);
+    });
+  };
+
   const send = (ws: WebSocket, frame: ServerFrame): void => {
     if (ws.readyState !== ws.OPEN) return;
     ws.send(JSON.stringify(frame));
@@ -113,13 +124,8 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
     /*
      * After *every* move, not just the last one. The store upserts on match id, so this is cheap and
      * idempotent, and it means an interrupted match is still on disk to replay.
-     *
-     * Reported rather than swallowed: a failure here must not interrupt a live game, but silently
-     * discarding it is how a data directory that was never writable went unnoticed indefinitely.
      */
-    void room.persist(deps.store).catch((error: unknown) => {
-      reportStoreError(error, `match ${room.code}`, deps.log);
-    });
+    savePoint(room);
   };
 
   const joinRoom = (ws: WebSocket, state: SocketState, room: Room, name: string): void => {
@@ -141,6 +147,9 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
     });
     broadcastSync(room);
     broadcastPresence(room);
+    // Save on seating, not just on moving, so a match can be resumed before anyone has played. A
+    // room still waiting for its second player is a no-op here.
+    savePoint(room);
   };
 
   wss.on('connection', (ws: WebSocket) => {
@@ -155,7 +164,15 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
       state.alive = true;
     });
 
-    ws.on('message', (raw) => {
+    /*
+     * One frame at a time, in arrival order.
+     *
+     * `hello` and `join` now await a possible load from disk, and a client is entitled to pipeline
+     * frames without waiting for a reply -- the Python SDK and the benchmark both do. Without a
+     * queue, a `join` sent immediately after a `hello` could be handled while the hello was still
+     * resolving, and would be answered with "join a match first".
+     */
+    const handleFrame = async (raw: unknown): Promise<void> => {
       let parsedJson: unknown;
       try {
         parsedJson = JSON.parse(String(raw));
@@ -185,7 +202,9 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
           let resumed = false;
           if (frame.sessionToken) {
             const claim = verifyToken(deps.secret, frame.sessionToken);
-            const room = claim ? deps.rooms.get(claim.matchId) : undefined;
+            // Resident or rebuilt from disk: a token stays good across an eviction and a restart,
+            // which is what makes "close the tab and come back tomorrow" work.
+            const room = claim ? await deps.rooms.resumeByMatchId(claim.matchId) : undefined;
             const holder = claim && room ? room.seatForClaim(claim) : undefined;
             if (room && holder) {
               state.room = room;
@@ -228,7 +247,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
 
         case 'join': {
           const code = normalizeCode(frame.code);
-          const room = deps.rooms.byCodeExact(code);
+          const room = await deps.rooms.resumeByCode(code);
           if (!room) {
             fail(ws, ErrorCodes.NO_SUCH_MATCH, `No match with code ${code}.`);
             return;
@@ -334,6 +353,15 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
           send(ws, { t: 'pong', serverTime: Date.now() });
           return;
       }
+    };
+
+    let queue: Promise<void> = Promise.resolve();
+    ws.on('message', (raw) => {
+      queue = queue.then(() => handleFrame(raw)).catch((error: unknown) => {
+        // A frame handler throwing must not wedge the socket's queue behind a rejected promise.
+        deps.log?.(`frame handler failed: ${error instanceof Error ? error.message : String(error)}`);
+        fail(ws, ErrorCodes.INTERNAL, 'The server failed to handle that frame.');
+      });
     });
 
     ws.on('close', () => {

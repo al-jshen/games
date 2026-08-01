@@ -2,6 +2,7 @@ import { normalizeCode } from '@games/protocol';
 import { CODE_LENGTH } from '@games/protocol';
 import { useEffect, useState } from 'react';
 import { hasBoard } from './games.js';
+import { listResumable, type ResumableMatch } from './resumable.js';
 import { client, useMatch } from './store.js';
 
 const NAME_KEY = 'games:name';
@@ -15,6 +16,18 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
   useEffect(() => {
     localStorage.setItem(NAME_KEY, name);
   }, [name]);
+
+  // Games this browser already holds a seat in. Looked up once, without blocking the lobby.
+  const [resumable, setResumable] = useState<ResumableMatch[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    void listResumable().then((matches) => {
+      if (live) setResumable(matches);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const create = (gameId: string) => client.createMatch(gameId, name || undefined);
 
@@ -44,6 +57,8 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
           />
         </label>
       </section>
+
+      <ResumePanel matches={resumable} games={match.games} />
 
       <section className="panel">
         <h2>Start a match</h2>
@@ -90,5 +105,48 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * Matches you are already in. Hidden entirely when there are none, so a first-time visitor sees the
+ * lobby they saw before.
+ */
+function ResumePanel({
+  matches,
+  games,
+}: {
+  matches: ResumableMatch[] | null;
+  games: { id: string; title: string }[];
+}) {
+  const unfinished = matches?.filter((m) => m.status !== 'finished') ?? [];
+  if (unfinished.length === 0) return null;
+  const titleOf = (gameId: string) => games.find((g) => g.id === gameId)?.title ?? gameId;
+
+  return (
+    <section className="panel">
+      <h2>Your games in progress</h2>
+      <p className="muted">
+        Still on this browser. Pick one up where you left it — your opponent can do the same from
+        theirs, whenever they get to it.
+      </p>
+      <ul className="resume-list">
+        {unfinished.map((m) => (
+          <li key={m.code}>
+            <a className="resume-item" href={`/g/${m.code}`}>
+              <span className="resume-title">{titleOf(m.gameId)}</span>
+              <span className="resume-code">{m.code}</span>
+              <span className="muted">
+                {m.seatsFilled < m.maxSeats
+                  ? 'waiting for an opponent'
+                  : m.moves === 0
+                    ? 'not started'
+                    : `${m.moves} move${m.moves === 1 ? '' : 's'} in`}
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

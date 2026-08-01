@@ -20,6 +20,23 @@ export interface MatchRecord {
   actions: LoggedAction[];
   finishedAt?: number;
   outcome?: Outcome;
+  /**
+   * Who was sitting in each seat. Optional because a record written before seats were durable will
+   * not have it, and those matches still have to replay.
+   *
+   * Strictly this is the server's business rather than the rules', but so are `code` and `matchId`:
+   * the record is the durable envelope around a match, not a rules artifact. Keeping seats in it is
+   * what lets a player reclaim their chair after the room has been evicted from memory — without
+   * it, a resumed match is a board nobody is allowed to touch.
+   */
+  players?: RecordedPlayer[];
+}
+
+/** A seat's occupant, as persisted. `playerId` is what a session token is checked against. */
+export interface RecordedPlayer {
+  seat: Seat;
+  name: string;
+  playerId: string;
 }
 
 export interface LoggedAction {
@@ -124,17 +141,22 @@ export function step<S, A, V, O>(
 /**
  * Rebuild a match from its action log. Same seed + same actions must give byte-identical state —
  * that equality is the regression net for every rule change, so it is asserted in CI.
+ *
+ * The per-action effects come back too. They are a by-product of the replay rather than extra work,
+ * and they are what lets a resumed match show the move log its players had been reading before they
+ * closed the tab.
  */
 export function replay<S, A, V, O>(
   mod: GameModule<S, A, V, O>,
   record: MatchRecord,
-): { state: S; version: number } {
+): { state: S; version: number; log: ReplayedTurn[] } {
   let state = mod.setup({
     seed: record.seed,
     seats: record.seats,
     options: record.options as O,
   });
   let version = 0;
+  const log: ReplayedTurn[] = [];
   for (const logged of record.actions) {
     const parsed = mod.actionValidator.validate(logged.action);
     if (!parsed.ok) {
@@ -148,8 +170,16 @@ export function replay<S, A, V, O>(
     }
     state = result.state;
     version = logged.version;
+    log.push({ version, seat: logged.seat, effects: result.effects });
   }
-  return { state, version };
+  return { state, version, log };
+}
+
+/** One replayed action's contribution to the move log. */
+export interface ReplayedTurn {
+  version: number;
+  seat: Seat;
+  effects: Effect[];
 }
 
 /** Assert a value survives a JSON round trip unchanged. Used by every game's test suite. */

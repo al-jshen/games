@@ -137,6 +137,16 @@ or a dropped tunnel reclaims the same seat, and a server restart with the same s
 them. Multiple sockets per seat are allowed rather than kicking the old one, which makes refresh races
 a non-issue. A disconnect pauses the match; it is never a forfeit.
 
+**You can stop mid-game and come back.** Close the browser, come back tomorrow, and the match is
+still there — it does not need to have been kept alive in memory in the meantime. Rooms are evicted
+after an hour with nobody connected, and rebuilt from the stored action log the moment either player
+returns: the same board, the same hidden information, the same move log, and both people back in the
+seats they had. A server restart is the same story, provided `SESSION_SECRET` is stable.
+
+The lobby lists the games this browser holds a seat in, so you do not have to have kept the link.
+Your opponent's browser holds their own token, and they can come back whenever suits them — neither
+of you has to be online at the same time to pick a game back up.
+
 Concurrency is two fields on every action: `expectVersion`, so you cannot act on a position you have
 not seen, and `clientActionId`, so a double-click or a reconnect-and-resend cannot buy the same card
 twice.
