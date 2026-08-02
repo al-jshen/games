@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
+import { fullMoveTime, isRealTimestamp, moveTimeLabel } from './time.js';
 import { client, useMatch } from './store.js';
 
 export function Room({ onLeave }: { onLeave: () => void }) {
@@ -172,29 +173,12 @@ function MoveLog({ describe }: { describe?: EffectDescriber }) {
   );
 }
 
-/**
- * When one move happened.
- *
- * Short, because the log is narrow and every line carries one — but day-aware, because a match can
- * be put down and picked up a week later. A bare "2:04 PM" against a move from last Tuesday would
- * be lying by omission, so anything not from today shows its date instead and the exact moment
- * lives in the tooltip. Formatting is left to the browser's locale rather than hard-coded, so 24
- * hour clocks and day-month order come out right without asking.
- */
+/** When one move happened. See `time.ts` for what is shown and why. */
 function MoveTime({ at }: { at: number }) {
-  if (!Number.isFinite(at) || at <= 0) return null;
-  const when = new Date(at);
-  const today = new Date();
-  const sameDay =
-    when.getFullYear() === today.getFullYear() &&
-    when.getMonth() === today.getMonth() &&
-    when.getDate() === today.getDate();
-  const label = sameDay
-    ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : when.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (!isRealTimestamp(at)) return null;
   return (
-    <time className="log-at" dateTime={when.toISOString()} title={when.toLocaleString()}>
-      {label}
+    <time className="log-at" dateTime={new Date(at).toISOString()} title={fullMoveTime(at)}>
+      {moveTimeLabel(at)}
     </time>
   );
 }

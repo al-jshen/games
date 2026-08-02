@@ -7,6 +7,7 @@ import SplendorDuelBoard from '@games/splendor-duel/ui';
 import TicTacToeBoard from '@games/tic-tac-toe/ui';
 import { describeEffect, describeTurn } from '../../../packages/games/splendor-duel/src/ui/Guide.tsx';
 import { CardView } from '../../../packages/games/splendor-duel/src/ui/Card.tsx';
+import { fullMoveTime, isRealTimestamp, moveTimeLabel } from '../src/time.js';
 
 /**
  * Render the boards against real redacted views.
@@ -233,5 +234,33 @@ describe('card tooltips', () => {
     const earned = renderToStaticMarkup(<CardView cardId="l1-27" effectiveCost={{}} />);
     expect(earned).toContain('free with your bonuses');
     expect(earned).toContain('printed cost 4 white, 1 pearl');
+  });
+});
+
+describe('move timestamps', () => {
+  const at = new Date(2026, 7, 2, 14, 7, 42).getTime();
+
+  it('shows seconds, so moves made in the same minute stay in order', () => {
+    const label = moveTimeLabel(at, new Date(2026, 7, 2, 18, 0, 0));
+    // Locale-dependent formatting, so match the shape rather than an exact string: some locales
+    // write 14:07:42 and some 2:07:42 PM, and both are correct for the reader who sees them.
+    expect(label).toMatch(/\b\d{1,2}:07:42\b/);
+  });
+
+  it('shows the date instead once the move is not from today', () => {
+    const label = moveTimeLabel(at, new Date(2026, 7, 9, 10, 0, 0));
+    expect(label).not.toMatch(/:\d{2}/);
+    expect(label).toMatch(/2|Aug/);
+  });
+
+  it('puts the whole moment, to the second, in the tooltip', () => {
+    expect(fullMoveTime(at)).toMatch(/42/);
+  });
+
+  it('treats a missing or nonsense timestamp as nothing to show', () => {
+    expect(isRealTimestamp(at)).toBe(true);
+    expect(isRealTimestamp(0)).toBe(false);
+    expect(isRealTimestamp(Number.NaN)).toBe(false);
+    expect(isRealTimestamp(undefined as unknown as number)).toBe(false);
   });
 });
