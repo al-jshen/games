@@ -346,16 +346,20 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
         height budget enough to flip the column in and out. A stable board beats a slightly fuller one.
       */}
       <div className="sd-info">
-        <div className="sd-bag" title="The bag's contents are public; only its order is secret">
-          <span className="sd-label">Bag ({view.bag.total})</span>
-          <div className="sd-bag-gems">
-            {TOKEN_COLORS.filter((c) => view.bag.counts[c] > 0).map((c) => (
-              <svg key={c} className="gem-chip" viewBox="-13 -13 26 26">
-                <title>{`${view.bag.counts[c]} ${c} in the bag`}</title>
-                <Gem color={c} size={22} label={String(view.bag.counts[c])} />
-              </svg>
-            ))}
-            {view.bag.total === 0 && <span className="muted">empty</span>}
+        {/* A count, not a list. Which tokens are in the bag is deducible from the board and both
+            players' tokens, but working that out is part of playing -- printing it here would hand
+            it to whoever is not keeping track. */}
+        <div className="sd-bag" title="How many tokens a replenish has to draw on. What is in there is for you to work out.">
+          <span className="sd-label">Bag</span>
+          <div className="sd-bag-count">
+            {view.bag.total === 0 ? (
+              <span className="muted">empty</span>
+            ) : (
+              <>
+                <span className="sd-bag-number">{view.bag.total}</span>
+                <span className="muted">token{view.bag.total === 1 ? '' : 's'}</span>
+              </>
+            )}
           </div>
         </div>
         <div className="sd-privileges" title="Privilege scrolls held by neither player">
@@ -368,7 +372,17 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
       </div>
 
       <div className="sd-bottom">
-        <PlayerStrip player={me} label="You" isTurn={myTurn} />
+        <PlayerStrip
+          player={me}
+          label="You"
+          isTurn={myTurn}
+          buying={{
+            affordable,
+            selectedCardId: buyRef?.t === 'reserved' ? buyRef.cardId : null,
+            locked,
+            onBuy: (cardId) => setMode({ k: 'buy', ref: { t: 'reserved', cardId } }),
+          }}
+        />
       </div>
 
       {/* ------------------------------------------------ action bar */}
@@ -622,14 +636,30 @@ function takeWarning(colors: (TokenColor | null)[]): string {
 
 /* ------------------------------------------------------------------ player strip */
 
+/**
+ * Reserved cards are the one part of your tableau you can still act on, so your own strip gets a way
+ * to buy them. Only your own: an opponent's reservations are theirs, and half of them you cannot
+ * even see.
+ */
+interface ReservedBuying {
+  /** Card ids you could pay for right now, for the same highlight the pyramid uses. */
+  affordable: ReadonlySet<string>;
+  /** The reserved card currently open in the purchase panel, if any. */
+  selectedCardId: string | null;
+  locked: boolean;
+  onBuy: (cardId: string) => void;
+}
+
 function PlayerStrip({
   player,
   label,
   isTurn,
+  buying,
 }: {
   player: PlayerView;
   label: string;
   isTurn: boolean;
+  buying?: ReservedBuying;
 }) {
   return (
     <section className={`sd-player ${isTurn ? 'sd-player-turn' : ''}`}>
@@ -703,7 +733,17 @@ function PlayerStrip({
             {player.reserved.length === 0 && <span className="muted">none</span>}
             {player.reserved.map((held, i) =>
               'cardId' in held ? (
-                <CardView key={i} cardId={held.cardId} size="small" />
+                <CardView
+                  key={i}
+                  cardId={held.cardId}
+                  size="small"
+                  affordable={buying ? buying.affordable.has(held.cardId) : false}
+                  selected={buying?.selectedCardId === held.cardId}
+                  // Reserving a card is only worth doing because you can buy it later, so the
+                  // thumbnail is the button. It is small, but the click opens the same full-size
+                  // purchase panel the pyramid uses, which is where the cost is actually read.
+                  onClick={buying && !buying.locked ? () => buying.onBuy(held.cardId) : undefined}
+                />
               ) : (
                 <div key={i} className="sd-facedown" title="Reserved from a deck — only its owner knows what it is">
                   ?

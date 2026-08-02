@@ -85,6 +85,29 @@ describe('Splendor Duel board renders', () => {
     expect(markup).toContain('sd-facedown');
   });
 
+  it('shows how full the bag is without showing what is in it', () => {
+    // Pick a state well into the game, so the bag has actually been filled by spending.
+    const state = states.find((s) => s.bag.length >= 4) ?? states[states.length - 1]!;
+    const markup = renderToStaticMarkup(
+      <SplendorDuelBoard
+        view={view(state, 0)}
+        seat={0}
+        actors={[state.turn]}
+        submit={() => undefined}
+        pending={false}
+      />,
+    );
+
+    expect(markup).toContain('sd-bag-number');
+    /*
+     * Replenish draws blind, so the bag's composition is worth knowing and is meant to be tracked
+     * rather than read off. It is reconstructible from the board and both players' tokens, so this
+     * is not a secret being protected -- it is the arithmetic staying the player's job.
+     */
+    expect(markup, 'the per-colour breakdown must not come back').not.toContain('sd-bag-gems');
+    expect(markup).not.toContain('in the bag');
+  });
+
   it('shows the empty-slot placeholder rather than crashing on an unrevealed card', () => {
     // What an optimistic prediction produces: a pyramid slot awaiting a reveal from the server.
     const predicted = JSON.parse(JSON.stringify(view(states[0]!, 0))) as SplendorView;

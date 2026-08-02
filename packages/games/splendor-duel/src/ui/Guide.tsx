@@ -95,9 +95,15 @@ export function describeTurn(view: SplendorView, seat: number, legal: SplendorAc
       return card && topCard && card.points > topCard.points ? id : top;
     });
     const bestCard = tryCard(best);
+    const reservedIds = new Set(
+      view.players.flatMap((p) => p.reserved.flatMap((r) => ('cardId' in r ? [r.cardId] : []))),
+    );
+    const reservedBuyable = [...purchasable].some((id) => reservedIds.has(id));
     out.push({
       title: `Buy a card — ${purchasable.size} you can afford`,
       detail: `Click a card to see what it costs after your bonuses.${
+        reservedBuyable ? ' That includes a card you reserved — click it in your own row below.' : ''
+      }${
         bestCard && bestCard.points > 0 ? ` The best on offer is worth ${bestCard.points} prestige.` : ''
       } Every card you own permanently discounts that colour.`,
     });
@@ -290,6 +296,7 @@ const CHEATSHEET: { heading: string; items: string[] }[] = [
       'Discounts are compulsory and stop at zero — you never gain tokens.',
       'There are no pearl bonuses, so pearls must be paid with pearls or gold.',
       'Gold is wild for any gem or pearl. Spent tokens go into the bag.',
+      'You can buy a card you reserved earlier: click its thumbnail in your own row.',
     ],
   },
   {
@@ -324,6 +331,7 @@ const CHEATSHEET: { heading: string; items: string[] }[] = [
       `${TOKEN_LIMIT} tokens between turns, counting gold and pearls. You may exceed it mid-turn and discard at the end.`,
       'Discarded and spent tokens go into the bag, which is what makes the next replenish possible.',
       'The bag starts empty: all 25 tokens begin on the board.',
+      'You are told how many tokens the bag holds, but not which — track what has been spent if you want to know what a replenish will bring.',
     ],
   },
 ];

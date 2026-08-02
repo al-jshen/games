@@ -237,6 +237,79 @@ test.describe('Splendor Duel board', () => {
   });
 });
 
+test.describe('reserved cards', () => {
+  test('a card you reserved can be opened and bought from your own strip', async ({ browser }) => {
+    /*
+     * Reserving exists so you can buy the card later. The engine always allowed it and
+     * `legalActions` always offered it, but the thumbnails in your player strip were rendered as
+     * plain images with no click handler, so there was no way to do it -- reserving was a one-way
+     * trip that cost you a turn.
+     *
+     * Deliberately does not wait for the card to become affordable. The card comes off a shuffled
+     * deck, so whether it is ever within reach depends on the seed, and a test that needs a lucky
+     * economy is a test that fails one run in two. What is checked here is the part that was
+     * missing and is fully determined: the thumbnail is an actionable control, and it opens the
+     * purchase panel bound to that specific card. Completing a purchase from a reservation is
+     * covered end to end in the rules tests, and exercised opportunistically by the long game below.
+     */
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    const active = (await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host : guest;
+    const other = active === host ? guest : host;
+
+    // The level-1 deck: available on the opening turn, and hidden from the opponent, which is the
+    // case where only the owner could ever act on it.
+    await active.getByRole('button', { name: 'Reserve the top card of the level 1 deck' }).click();
+    await active.locator('.token-board .cell-selectable').first().click();
+
+    const mine = active.locator('.sd-player', { hasText: 'You' }).first();
+    const thumb = mine.locator('.sd-reserved .card');
+    await expect(thumb).toHaveCount(1);
+    // Your opponent sees that you hold one, but not which.
+    await expect(
+      other.locator('.sd-player', { hasText: 'Opponent' }).first().locator('.sd-facedown'),
+    ).toHaveCount(1);
+
+    /*
+     * Reserving ended the turn, and cards are only actionable on your own turn -- the same rule the
+     * pyramid follows. So hand the turn back before asserting anything about clickability, or the
+     * test would be measuring the turn gate rather than the thing it is about.
+     */
+    await expect(thumb).toHaveRole('img');
+    await expect(other.locator('.sd-guide', { hasText: 'Your turn' })).toBeVisible();
+    await other.locator('.token-board .cell-selectable').first().click();
+    const otherTake = other.getByRole('button', { name: /^Take/ });
+    await expect(otherTake).toBeEnabled();
+    await otherTake.click();
+    await expect(active.locator('.sd-guide', { hasText: 'Your turn' })).toBeVisible();
+
+    // The regression: this was a plain `img` with no handler, so it could never be clicked.
+    await expect(thumb).toHaveRole('button');
+    await thumb.click();
+
+    const panel = active.locator('.sd-buy');
+    await expect(panel).toBeVisible();
+    // `card-selected` is derived from the purchase panel's own reference, so this asserts the panel
+    // is bound to *this* reservation rather than merely being open.
+    await expect(thumb).toHaveClass(/card-selected/);
+    await expect(panel.getByRole('button', { name: 'Buy' })).toBeVisible();
+    // Reserving is not offered for something already reserved.
+    await expect(panel.getByRole('button', { name: 'Reserve' })).toHaveCount(0);
+
+    await panel.getByRole('button', { name: 'cancel' }).click();
+    await expect(panel).toBeHidden();
+    await expect(thumb).toHaveCount(1);
+    expect(problemsOf(active)).toEqual([]);
+
+    await host.close();
+    await guest.close();
+  });
+});
+
 test.describe('session resilience', () => {
   test('a refresh puts you back in your seat with the game intact', async ({ browser }) => {
     const host = await openPlayer(browser, 'Ann');
@@ -455,8 +528,16 @@ test.describe('a long game in the browser', () => {
         continue;
       }
 
-      // Prefer buying, so the tableau and the wild-colour path get used.
-      const affordable = active.locator('.sd-row .card-affordable');
+      /*
+       * Prefer buying, so the tableau and the wild-colour path get used. Reservations are included
+       * and come first: buying one back is a distinct code path from buying off the pyramid, and
+       * over 70 moves this reliably exercises it in a real browser.
+       */
+      const ownStrip = active.locator('.sd-player', { hasText: 'You' }).first();
+      const affordableReserved = ownStrip.locator('.sd-reserved .card-affordable');
+      const affordable = (await affordableReserved.count())
+        ? affordableReserved
+        : active.locator('.sd-row .card-affordable');
       if (await affordable.count()) {
         await affordable.first().click();
         const panel = active.locator('.sd-buy');

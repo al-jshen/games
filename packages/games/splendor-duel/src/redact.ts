@@ -2,7 +2,6 @@ import { seal, type Effect, type Redacted, type Seat, type Viewer } from '@games
 import {
   bonuses,
   colorPoints,
-  emptyTokens,
   tokenTotal,
   totalCrowns,
   totalPoints,
@@ -18,14 +17,22 @@ import type {
 import { LEVELS, TOKEN_COLORS } from './types.js';
 
 /**
- * The bag's *composition* is public — both players can see what has been spent and legitimately
- * compute draw odds — while its *order* is secret. So it is redacted to a multiset of counts, not
- * to a bare total. Under-revealing here would be a UX bug; revealing the order would be a cheat.
+ * The bag is opaque: a count, and nothing about which tokens are in it.
+ *
+ * An earlier version published the per-colour composition, on the reasoning that a player could
+ * derive it anyway — board and both players' tokens are public, and they sum with the bag to a
+ * fixed 25 — so withholding it only made them do arithmetic. That reasoning is sound and the
+ * conclusion was still wrong: doing the arithmetic *is* the game. Replenish draws blind from the
+ * bag, so knowing its exact composition is a real edge, and a player at a physical table has to
+ * earn it by tracking every token spent. Printing it on screen hands that to whoever is not
+ * counting, which is precisely backwards.
+ *
+ * Note what this does and does not achieve. It is not a secret in the cryptographic sense: the
+ * composition remains recoverable from the rest of this view, and a determined opponent can still
+ * script it. What it restores is the default — you now have to do the work to know.
  */
-function bagCounts(bag: readonly TokenColor[]): { counts: Record<TokenColor, number>; total: number } {
-  const counts = emptyTokens();
-  for (const token of bag) counts[token] += 1;
-  return { counts, total: bag.length };
+function bagView(bag: readonly TokenColor[]): { total: number } {
+  return { total: bag.length };
 }
 
 function playerView(player: PlayerState, seat: Seat, viewer: Viewer): PlayerView {
@@ -74,7 +81,7 @@ export function redactFor(viewer: Viewer, state: SplendorState): Redacted<Splend
     you: viewer,
     // `seed` and `rngCounter` are deliberately absent: whoever holds them can compute every future
     // shuffle, so they are as sensitive as the deck order itself.
-    bag: bagCounts(state.bag),
+    bag: bagView(state.bag),
     board: [...state.board],
     decks,
     pyramid: {

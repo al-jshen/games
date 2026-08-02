@@ -199,8 +199,10 @@ Connection-level problems, as opposed to a refused action.
 see `SplendorView` in `packages/games/splendor-duel/src/types.ts`. Two details in that redaction are
 worth knowing because they are deliberate rather than accidental:
 
-- The **bag** reports composition (`counts` per colour) but not order. Both players can legitimately
-  count what has been spent and compute draw odds; only the order is secret.
+- The **bag** reports a `total` and nothing else. Its composition is recoverable from the rest of the
+  view — board plus both players plus bag is always the same 25 tokens — but working that out is part
+  of playing, and `replenish` draws from the bag blind, so publishing it would hand a real edge to
+  whoever is not keeping track.
 - **Decks** collapse to a count, and an opponent's reserved cards appear as `{"hidden": true}` unless
   they were taken from the face-up pyramid — in which case the opponent genuinely saw them. Slot
   count is always preserved, because holding three reservations blocks further ones and that is

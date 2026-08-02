@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { apply } from '../src/apply.js';
 import { card } from '../src/cards.js';
 import { legalActions, validate } from '../src/legal.js';
+import { legalActionsFromView } from '../src/predict.js';
 import { redactFor, secretsFor } from '../src/redact.js';
 import { bonuses, tokenTotal, totalCrowns, totalPoints, victoryFor } from '../src/score.js';
 import { setup } from '../src/setup.js';
@@ -413,6 +414,76 @@ describe('the position the official rules do not cover', () => {
 
 /* ------------------------------------------------------------------ redaction */
 
+describe('reserving a card and then buying it', () => {
+  /**
+   * The whole point of reserving is to buy the card later, so the round trip deserves its own test
+   * rather than being left to random playthroughs to stumble across.
+   */
+  it('moves a reserved card into your tableau and frees the reservation slot', () => {
+    let state = newGame('reserve-then-buy');
+    const seat = state.turn;
+
+    // A level-1 pyramid card specifically: cheap enough that the board holds the price.
+    const reserve = legalActions(state, seat).actions.find(
+      (a): a is Extract<SplendorAction, { t: 'reserve' }> =>
+        a.t === 'reserve' && a.from.t === 'pyramid' && a.from.level === 1,
+    );
+    expect(reserve, 'a reserve should be available on the opening turn').toBeDefined();
+    const first = apply(state, seat, reserve!);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    state = first.state;
+
+    const held = state.players[seat].reserved[0]!;
+    expect(state.players[seat].reserved).toHaveLength(1);
+    // Reserving is the only way to get gold, and gold is what makes the card affordable later.
+    expect(state.players[seat].tokens.gold).toBe(1);
+
+    /*
+     * Sweep the board into this player's hand so they can afford the card, by *moving* tokens
+     * rather than inventing them -- conservation still has to hold at the end, or the invariant
+     * check below would be measuring a state the game could never reach.
+     */
+    const swept = { ...state.players[seat].tokens };
+    for (const token of state.board) if (token) swept[token] += 1;
+    const players = [...state.players] as SplendorState['players'];
+    players[seat] = { ...players[seat], tokens: swept };
+    const rich: SplendorState = {
+      ...state,
+      board: state.board.map(() => null),
+      players,
+      turn: seat,
+      stage: 'optional',
+    };
+
+    const buy = legalActions(rich, seat).actions.find(
+      (a) => a.t === 'purchase' && a.from.t === 'reserved' && a.from.cardId === held.cardId,
+    );
+    expect(buy, 'the reserved card should be purchasable once affordable').toBeDefined();
+
+    /*
+     * And the same offer has to be visible from the redacted view, because that -- not the truth
+     * state -- is what the board renders its affordances from. A purchase the server would accept
+     * but the view does not surface is a card the player can never click.
+     */
+    const fromView = legalActionsFromView(redactFor(seat, rich), seat).actions;
+    expect(
+      fromView.some((a) => a.t === 'purchase' && a.from.t === 'reserved' && a.from.cardId === held.cardId),
+      'the view must offer the reserved-card purchase too',
+    ).toBe(true);
+
+    const bought = apply(rich, seat, buy!);
+    expect(bought.ok).toBe(true);
+    if (!bought.ok) return;
+
+    const after = bought.state.players[seat];
+    expect(after.reserved, 'the reservation slot is freed').toHaveLength(0);
+    const owned = [...after.stacks.flatMap((st) => st.cardIds), ...after.colorless];
+    expect(owned, 'the card is now in the tableau').toContain(held.cardId);
+    assertInvariants(bought.state, 'after buying a reserved card');
+  });
+});
+
 describe('redaction', () => {
   it('never leaks the seed, deck order, or a secretly reserved card', () => {
     playRandomGame('leak', { maxTurnsWithoutPurchase: 60 }, (state) => {
@@ -424,16 +495,21 @@ describe('redaction', () => {
     });
   });
 
-  it('reveals the bag composition but not its order', () => {
+  it('reveals how many tokens are in the bag, and nothing about which', () => {
     const state = newGame('bag');
     const withBag: SplendorState = { ...state, bag: ['white', 'blue', 'pearl'] };
     const view = redactFor(0, withBag);
     expect(view.bag.total).toBe(3);
-    expect(view.bag.counts.white).toBe(1);
-    expect(view.bag.counts.blue).toBe(1);
-    expect(view.bag.counts.pearl).toBe(1);
-    // Order must not survive into the view in any form.
-    expect(JSON.stringify(view)).not.toContain('["white","blue","pearl"]');
+
+    /*
+     * Replenish draws blind from the bag, so its composition is worth real money. A player at a
+     * table has to earn that by tracking every token spent; the view must not do it for them.
+     *
+     * Swapping the contents for three of something else has to leave the view identical -- which
+     * also rules out any per-colour field creeping back in under another name.
+     */
+    const different: SplendorState = { ...state, bag: ['black', 'black', 'gold'] };
+    expect(JSON.stringify(redactFor(0, different))).toBe(JSON.stringify(view));
   });
 
   it('is view-stable: permuting hidden information changes nothing an opponent can see', () => {

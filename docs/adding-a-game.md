@@ -72,9 +72,11 @@ Two mistakes worth avoiding, both of which Splendor Duel demonstrates:
 - **Model knowledge per fact, not per bucket.** A card reserved from the face-up display was
   legitimately seen by the opponent; one drawn off a deck was not. Same field, different visibility —
   so the datum carries `{ cardId, publiclyKnown }` rather than living in a blanket `secret` bag.
-- **Do not over-hide.** The bag's *composition* is public and its *order* is secret, so it redacts to
-  a per-colour count. Collapsing it to a single total would stop players computing draw odds they are
-  entitled to.
+- **Derivable is not the same as free to publish.** Splendor Duel's bag redacts to a bare count. Its
+  composition can be reconstructed from the rest of the view, so withholding it stops nobody who is
+  determined — but reconstructing it is work the game intends players to do, and handing it over
+  quietly changes the game. Ask what a player at a table would have to earn, not only what an
+  attacker could deduce.
 
 Preserve array **lengths** when masking identities — emit a placeholder, never a shorter array.
 

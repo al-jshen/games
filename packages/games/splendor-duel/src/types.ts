@@ -236,8 +236,8 @@ export interface SplendorView {
   readonly v: 1;
   /** `null` for a spectator. */
   you: Seat | null;
-  /** Composition only — never the order. */
-  bag: { counts: Record<TokenColor, number>; total: number };
+  /** How many tokens are in the bag. Not which ones — see `redactFor`. */
+  bag: { total: number };
   board: (TokenColor | null)[];
   decks: Record<Level, number>;
   pyramid: Record<Level, (string | null)[]>;

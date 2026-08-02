@@ -154,11 +154,16 @@
   gap: 6px;
   flex: 0 0 auto;
 }
-.sd-bag-gems {
+.sd-bag-count {
   display: flex;
-  gap: 2px;
+  gap: 5px;
   flex-wrap: nowrap;
-  align-items: center;
+  align-items: baseline;
+}
+.sd-bag-number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 15px;
 }
 .sd-privileges {
   display: flex;

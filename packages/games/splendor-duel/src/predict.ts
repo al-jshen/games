@@ -9,7 +9,7 @@ import type {
   SplendorView,
   TokenColor,
 } from './types.js';
-import { LEVELS, TOKEN_COLORS } from './types.js';
+import { LEVELS } from './types.js';
 
 /**
  * Client-side prediction: run the real rules against a *redacted view* so the acting player's own
@@ -37,6 +37,12 @@ import { LEVELS, TOKEN_COLORS } from './types.js';
  */
 export const UNKNOWN_CARD = '__unknown__';
 
+/**
+ * Fills the client's synthetic bag. Any colour would do -- the point is that the count is right and
+ * the contents are not knowable from here, which is exactly the client's real position.
+ */
+const BAG_PLACEHOLDER: TokenColor = 'gold';
+
 function synthPlayer(view: SplendorView['players'][number]): PlayerState {
   return {
     tokens: { ...view.tokens },
@@ -59,15 +65,14 @@ function synthPlayer(view: SplendorView['players'][number]): PlayerState {
  * Build a state the reducer can run on from what the client actually knows.
  *
  * Decks are stocked with the right *number* of placeholder cards, so deck counts stay accurate and
- * a refill yields an explicit "unknown card" the UI can render face-down. The bag is expanded from
- * its public composition in an arbitrary order, which is harmless because the only action that
- * depends on bag order is `replenish`, and that one is refused outright.
+ * a refill yields an explicit "unknown card" the UI can render face-down. The bag gets the right
+ * number of placeholder tokens and nothing more: the client is not told what is in it, and does not
+ * need to be, because the only action whose outcome depends on the contents is `replenish` and that
+ * one is refused outright. Everything else either adds to the bag or ignores it.
  */
 function viewToState(view: SplendorView): SplendorState {
-  const bag: TokenColor[] = [];
-  for (const color of TOKEN_COLORS) {
-    for (let i = 0; i < view.bag.counts[color]; i++) bag.push(color);
-  }
+  // Stand-ins. Their colour is never read: `replenish` is the only reader and it is refused.
+  const bag: TokenColor[] = new Array<TokenColor>(view.bag.total).fill(BAG_PLACEHOLDER);
   const decks = {} as Record<1 | 2 | 3, string[]>;
   for (const level of LEVELS) {
     decks[level] = new Array<string>(view.decks[level]).fill(UNKNOWN_CARD);
