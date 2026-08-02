@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { loadBoard, type BoardModule } from './games.js';
+import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
 import { client, useMatch } from './store.js';
 
 export function Room({ onLeave }: { onLeave: () => void }) {
@@ -146,7 +146,7 @@ function ShareCode({ code, waiting }: { code: string | null; waiting: boolean })
  * A game may supply its own describer to name its cards properly; otherwise the generic fallback
  * below keeps the log useful for a game that has not bothered.
  */
-function MoveLog({ describe }: { describe?: (effect: Record<string, unknown>) => string }) {
+function MoveLog({ describe }: { describe?: EffectDescriber }) {
   const match = useMatch();
   const entries = [...match.log].reverse().slice(0, 40);
   const render = describe ?? describeEffect;
@@ -159,7 +159,12 @@ function MoveLog({ describe }: { describe?: (effect: Record<string, unknown>) =>
         {entries.map((entry) => (
           <li key={entry.version}>
             <span className={`dot seat-${entry.seat}`} />
-            <span>{entry.effects.map(render).filter(Boolean).join(' · ') || '—'}</span>
+            {/* An explicit arrow, not a bare `render`: `map` would otherwise pass the array index
+                as the describer's second argument, which is now the acting seat. */}
+            <span className="log-text">
+              {entry.effects.map((effect) => render(effect, entry.seat)).filter(Boolean).join(' · ') || '—'}
+            </span>
+            <MoveTime at={entry.at} />
           </li>
         ))}
       </ol>
@@ -167,8 +172,35 @@ function MoveLog({ describe }: { describe?: (effect: Record<string, unknown>) =>
   );
 }
 
+/**
+ * When one move happened.
+ *
+ * Short, because the log is narrow and every line carries one — but day-aware, because a match can
+ * be put down and picked up a week later. A bare "2:04 PM" against a move from last Tuesday would
+ * be lying by omission, so anything not from today shows its date instead and the exact moment
+ * lives in the tooltip. Formatting is left to the browser's locale rather than hard-coded, so 24
+ * hour clocks and day-month order come out right without asking.
+ */
+function MoveTime({ at }: { at: number }) {
+  if (!Number.isFinite(at) || at <= 0) return null;
+  const when = new Date(at);
+  const today = new Date();
+  const sameDay =
+    when.getFullYear() === today.getFullYear() &&
+    when.getMonth() === today.getMonth() &&
+    when.getDate() === today.getDate();
+  const label = sameDay
+    ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : when.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return (
+    <time className="log-at" dateTime={when.toISOString()} title={when.toLocaleString()}>
+      {label}
+    </time>
+  );
+}
+
 /** Game-agnostic fallback. Anything game-specific belongs in that game's own describer. */
-function describeEffect(effect: Record<string, unknown>): string {
+function describeEffect(effect: Record<string, unknown>, actorSeat: number): string {
   const k = String(effect.k);
   switch (k) {
     case 'tookTokens':
@@ -176,7 +208,10 @@ function describeEffect(effect: Record<string, unknown>): string {
     case 'privilegeUsed':
       return `spent a privilege for ${String(effect.color)}`;
     case 'replenished':
-      return `replenished ${(effect.placed as unknown[]).length} token(s)`;
+      {
+        const placed = (effect.placed as unknown[]).length;
+        return `replenished ${placed} token${placed === 1 ? '' : 's'}`;
+      }
     case 'purchased':
       return `bought ${String(effect.cardId)}${effect.wildColor ? ` as ${String(effect.wildColor)}` : ''}`;
     case 'reserved':
@@ -189,8 +224,11 @@ function describeEffect(effect: Record<string, unknown>): string {
       return `claimed ${String(effect.royalId)}`;
     case 'discarded':
       return `discarded ${Object.entries(effect.tokens as Record<string, number>).map(([c, n]) => `${n} ${c}`).join(', ')}`;
-    case 'privilegeGranted':
-      return effect.from === 'none' ? '' : 'gained a privilege';
+    case 'privilegeGranted': {
+      // Whoever gained it is not always whoever moved -- replenishing hands one to the opponent.
+      if (effect.from === 'none') return '';
+      return effect.seat === actorSeat ? 'gained a privilege' : 'opponent gained a privilege';
+    }
     case 'abilityResolved':
       return String(effect.ability) === 'playAgain' ? 'takes another turn' : '';
     case 'abilitySkipped':

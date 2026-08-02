@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import SplendorDuelBoard from '@games/splendor-duel/ui';
 import TicTacToeBoard from '@games/tic-tac-toe/ui';
-import { describeTurn } from '../../../packages/games/splendor-duel/src/ui/Guide.tsx';
+import { describeEffect, describeTurn } from '../../../packages/games/splendor-duel/src/ui/Guide.tsx';
+import { CardView } from '../../../packages/games/splendor-duel/src/ui/Card.tsx';
 
 /**
  * Render the boards against real redacted views.
@@ -166,5 +167,71 @@ describe('tic-tac-toe board renders', () => {
     );
     expect(markup).toContain('ttt-grid');
     expect(markup).toContain('Your move');
+  });
+});
+
+describe('the move log', () => {
+  /**
+   * Log lines are written in the voice of the player the line is attributed to. Most effects happen
+   * to that player, but not all of them, and getting the subject wrong turns the log into a record
+   * of things that did not happen.
+   */
+  it('credits the scroll from a replenish to the opponent, not to whoever replenished', () => {
+    let found: { actor: 0 | 1; effects: Record<string, unknown>[] } | null = null;
+    for (const state of statesAlongAGame('replenish-log', 200)) {
+      const replenish = legalActions(state, state.turn).actions.find((a) => a.t === 'replenish');
+      if (!replenish) continue;
+      const result = apply(state, state.turn, replenish);
+      if (!result.ok) continue;
+      found = { actor: state.turn, effects: result.effects as unknown as Record<string, unknown>[] };
+      break;
+    }
+    expect(found, 'no replenish came up to test').not.toBeNull();
+
+    const lines = found!.effects.map((effect) => describeEffect(effect, found!.actor));
+    expect(lines).toContain('opponent gained a scroll');
+    // The bug this replaces: the same effect read as though the mover had gained it.
+    expect(lines).not.toContain('gained a scroll');
+  });
+
+  it('pluralises the replenish count instead of hedging with "token(s)"', () => {
+    expect(describeEffect({ k: 'replenished', placed: [1] }, 0)).toBe('replenished 1 token');
+    expect(describeEffect({ k: 'replenished', placed: [1, 2, 3] }, 0)).toBe('replenished 3 tokens');
+  });
+
+  it('says who ended up with a scroll in each of the ways one changes hands', () => {
+    const line = (effect: Record<string, unknown>, actor: number) => describeEffect(effect, actor);
+    // A card ability granting the mover a scroll from the pool.
+    expect(line({ k: 'privilegeGranted', seat: 0, from: 'pool' }, 0)).toBe('gained a scroll');
+    // A replenish: the other player gets it.
+    expect(line({ k: 'privilegeGranted', seat: 1, from: 'pool' }, 0)).toBe('opponent gained a scroll');
+    // The pool was empty, so it came off the other player.
+    expect(line({ k: 'privilegeGranted', seat: 0, from: 'opponent' }, 0)).toBe('took a scroll from the opponent');
+    expect(line({ k: 'privilegeGranted', seat: 1, from: 'opponent' }, 0)).toBe('opponent took a scroll back');
+    // All three were already held, so nothing happened and there is nothing to say.
+    expect(line({ k: 'privilegeGranted', seat: 0, from: 'none' }, 0)).toBe('');
+  });
+});
+
+describe('card tooltips', () => {
+  // l1-27 costs 4 white + 1 pearl. Three published datasets get this card wrong, so it doubles as a
+  // check that the tooltip is reading real card data.
+  it('shows the printed cost alongside what the card costs you', () => {
+    const discounted = renderToStaticMarkup(<CardView cardId="l1-27" effectiveCost={{ white: 1, pearl: 1 }} />);
+    expect(discounted).toContain('cost 1 white, 1 pearl');
+    // Without this, "1 white" tells you nothing about whether your tableau is doing any work.
+    expect(discounted).toContain('printed cost 4 white, 1 pearl');
+  });
+
+  it('does not claim a discount where there is none', () => {
+    const plain = renderToStaticMarkup(<CardView cardId="l1-27" />);
+    expect(plain).toContain('cost 4 white, 1 pearl');
+    expect(plain).not.toContain('printed cost');
+  });
+
+  it('distinguishes a card that is free from one your bonuses have made free', () => {
+    const earned = renderToStaticMarkup(<CardView cardId="l1-27" effectiveCost={{}} />);
+    expect(earned).toContain('free with your bonuses');
+    expect(earned).toContain('printed cost 4 white, 1 pearl');
   });
 });

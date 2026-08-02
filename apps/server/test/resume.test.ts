@@ -185,6 +185,16 @@ describe('coming back to a match after the room is gone from memory', () => {
     // The log is rebuilt from the replay's effects, so history reads the same as before the break.
     expect(JSON.stringify(after.log)).toBe(JSON.stringify(before.log));
     expect(after.log?.length).toBe(3);
+
+    /*
+     * Including when each move happened. The timestamps come from the stored action log rather than
+     * from the replay, which happens now -- without that, resuming would silently restamp the whole
+     * history to the moment somebody reopened the tab.
+     */
+    const times = (after.log ?? []).map((entry) => entry.at);
+    expect(times.every((t) => Number.isFinite(t) && t > 0)).toBe(true);
+    expect(times).toEqual((before.log ?? []).map((entry) => entry.at));
+    expect(Math.max(...times)).toBeLessThan(Date.now());
     back.close();
   });
 

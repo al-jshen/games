@@ -170,7 +170,7 @@ export function replay<S, A, V, O>(
     }
     state = result.state;
     version = logged.version;
-    log.push({ version, seat: logged.seat, effects: result.effects });
+    log.push({ version, seat: logged.seat, at: logged.at, effects: result.effects });
   }
   return { state, version, log };
 }
@@ -179,6 +179,8 @@ export function replay<S, A, V, O>(
 export interface ReplayedTurn {
   version: number;
   seat: Seat;
+  /** When it was originally played, so a resumed log reads the same as the one that was lost. */
+  at: number;
   effects: Effect[];
 }
 

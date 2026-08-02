@@ -54,6 +54,7 @@ interface Seatholder {
 
 interface AppliedResult {
   version: number;
+  at: number;
   effects: Effect[];
 }
 
@@ -68,7 +69,7 @@ export class Room {
   readonly seats: Seatholder[] = [];
   readonly maxSeats: number;
   /** Truth effects, redacted per recipient on the way out. Powers the move log and replays. */
-  readonly log: { version: number; seat: Seat; effects: Effect[] }[] = [];
+  readonly log: { version: number; seat: Seat; at: number; effects: Effect[] }[] = [];
   private readonly dedupe = new Map<string, AppliedResult>();
   status: RoomStatus = 'lobby';
   lastActivity = Date.now();
@@ -256,6 +257,7 @@ export class Room {
     return this.log.map((entry) => ({
       version: entry.version,
       seat: entry.seat,
+      at: entry.at,
       effects: this.redactEffects(viewer, entry.effects),
     }));
   }
@@ -293,17 +295,20 @@ export class Room {
     seat: Seat,
     action: unknown,
     clientActionId: string,
-  ): { ok: true; effects: Effect[] } | { ok: false; code: string; message: string } {
-    const result = step(this.mod as never, this.match as never, seat, action, Date.now());
+  ): { ok: true; effects: Effect[]; at: number } | { ok: false; code: string; message: string } {
+    // One clock reading for the whole move, so the durable record, the in-memory log and the frame
+    // that goes out to both players cannot disagree about when it happened.
+    const at = Date.now();
+    const result = step(this.mod as never, this.match as never, seat, action, at);
     if (!result.ok) {
       return { ok: false, code: result.error.code, message: result.error.message };
     }
     this.match = result.match as LiveMatch<unknown>;
-    this.log.push({ version: this.match.version, seat, effects: result.effects });
-    this.remember(seat, clientActionId, { version: this.match.version, effects: result.effects });
-    this.lastActivity = Date.now();
+    this.log.push({ version: this.match.version, seat, at, effects: result.effects });
+    this.remember(seat, clientActionId, { version: this.match.version, at, effects: result.effects });
+    this.lastActivity = at;
     if (result.outcome.status === 'over') this.status = 'finished';
-    return { ok: true, effects: result.effects };
+    return { ok: true, effects: result.effects, at };
   }
 
   /** Nothing has happened here worth a row on disk: a lobby whose second player never arrived. */

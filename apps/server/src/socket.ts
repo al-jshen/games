@@ -101,13 +101,20 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
    * One `applied` per recipient, each with its own redacted snapshot and effects. Only the
    * submitter gets `clientActionId` echoed back, since only they have a pending move to retire.
    */
-  const broadcastApplied = (room: Room, seat: Seat, effects: unknown[], clientActionId: string): void => {
+  const broadcastApplied = (
+    room: Room,
+    seat: Seat,
+    effects: unknown[],
+    clientActionId: string,
+    at: number,
+  ): void => {
     for (const holder of room.seats) {
       for (const conn of holder.sockets) {
         const frame: ServerFrame = {
           t: 'applied',
           snapshot: room.snapshot(holder.seat),
           seat,
+          at,
           effects: room.redactEffects(holder.seat, effects as never) as Record<string, unknown>[],
           ...(holder.seat === seat ? { clientActionId } : {}),
         };
@@ -289,6 +296,9 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
               t: 'applied',
               snapshot: room.snapshot(seat),
               seat,
+              // The time the move was *applied*, not the time this duplicate arrived -- a retry must
+              // not make the same move appear to have happened twice at two different times.
+              at: already.at,
               clientActionId: frame.clientActionId,
               effects: room.redactEffects(seat, already.effects) as Record<string, unknown>[],
             });
@@ -319,7 +329,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
             });
             return;
           }
-          broadcastApplied(room, seat, result.effects, frame.clientActionId);
+          broadcastApplied(room, seat, result.effects, frame.clientActionId, result.at);
           return;
         }
 

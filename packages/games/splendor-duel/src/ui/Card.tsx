@@ -1,5 +1,6 @@
 import { tryCard } from '../cards.js';
 import type { CardDef, GemColor, PayColor } from '../types.js';
+import { PAY_COLORS } from '../types.js';
 
 /**
  * A Splendor Duel card, drawn as SVG from the card data.
@@ -128,6 +129,12 @@ const LEVEL_TINT: Record<number, string> = {
  */
 export type CardSize = 'pyramid' | 'royal' | 'small' | 'detail';
 
+/** Written in the game's canonical colour order, so the two costs always read the same way round. */
+function formatCost(cost: Partial<Record<PayColor, number>>): string {
+  const parts = PAY_COLORS.filter((c) => (cost[c] ?? 0) > 0).map((c) => `${cost[c]} ${c}`);
+  return parts.length > 0 ? parts.join(', ') : 'nothing';
+}
+
 export interface CardViewProps {
   cardId: string | null;
   size?: CardSize;
@@ -177,6 +184,18 @@ export function CardView({
 
   const cost = effectiveCost ?? def.cost;
   const costEntries = Object.entries(cost).filter(([, n]) => (n ?? 0) > 0) as [PayColor, number][];
+  /*
+   * The face shows what the card costs *you*, which is the number you act on. The printed cost is
+   * what makes that number meaningful -- "2 blue" tells you nothing about whether your tableau is
+   * working -- so the tooltip carries both whenever a discount has actually been applied.
+   */
+  const discounted = PAY_COLORS.some((c) => (cost[c] ?? 0) !== (def.cost[c] ?? 0));
+  const costLine = costEntries.length
+    ? `cost ${formatCost(cost)}`
+    : discounted
+      ? 'free with your bonuses'
+      : 'free';
+  const costDescription = discounted ? `${costLine}; printed cost ${formatCost(def.cost)}` : costLine;
   const bonusColor = def.wild ? assignedColor ?? null : def.bonusColor;
 
   const classes = ['card', `card--${size}`];
@@ -190,7 +209,7 @@ export function CardView({
     def.points ? `${def.points} prestige` : null,
     def.crowns ? `${def.crowns} crown${def.crowns > 1 ? 's' : ''}` : null,
     def.wild ? 'wild bonus' : bonusColor ? `${def.bonusCount}x ${bonusColor} bonus` : 'no bonus',
-    costEntries.length ? `cost ${costEntries.map(([c, n]) => `${n} ${c}`).join(', ')}` : 'free',
+    costDescription,
     ...def.abilities.map((a) => ABILITY_LABEL[a] ?? a),
   ]
     .filter(Boolean)

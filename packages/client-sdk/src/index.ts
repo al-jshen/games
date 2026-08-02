@@ -253,7 +253,10 @@ export class GameClient {
           this.pendingAction = null;
         }
         this.adoptSnapshot(frame.snapshot, {
-          log: [...this.state.log, { version: frame.snapshot.version, seat: frame.seat, effects: frame.effects }],
+          log: [
+            ...this.state.log,
+            { version: frame.snapshot.version, seat: frame.seat, at: frame.at, effects: frame.effects },
+          ],
           pending: this.pendingAction !== null,
           error: null,
         });

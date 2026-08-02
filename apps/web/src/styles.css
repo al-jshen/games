@@ -397,6 +397,19 @@ input:focus {
 .log li .dot {
   margin-top: 5px;
 }
+.log-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Fixed width and tabular figures so the times line up in a column instead of ragging with the
+   text beside them. `flex: none` keeps a long move description from squeezing the clock out. */
+.log-at {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
 
 /* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
 @media (max-height: 620px) {

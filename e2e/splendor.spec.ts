@@ -197,6 +197,13 @@ test.describe('Splendor Duel board', () => {
     await expect(other.locator('.sd-guide')).toContainText('Your turn');
     await expect(other.locator('.log li').first()).toContainText('took');
 
+    // Every entry is timestamped, and both players are shown the same server-side moment rather
+    // than whenever the frame happened to reach each of them.
+    const stamp = (page: Page) => page.locator('.log li').first().locator('.log-at');
+    await expect(stamp(other)).toBeVisible();
+    await expect(stamp(other)).toHaveAttribute('datetime', /^\d{4}-\d{2}-\d{2}T/);
+    expect(await stamp(active).getAttribute('datetime')).toBe(await stamp(other).getAttribute('datetime'));
+
     await host.close();
     await guest.close();
   });

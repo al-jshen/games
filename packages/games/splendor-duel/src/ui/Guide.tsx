@@ -360,8 +360,14 @@ export function cardLabel(cardId: string | null): string {
  * Lives with the game rather than in the platform shell, because only the game knows that `l1-09` is
  * a level-1 white card worth nothing. The shell falls back to a generic description for games that
  * do not provide this.
+ *
+ * Every line is written in the voice of `actorSeat` — the player the log attributes the move to.
+ * That matters because an effect's own `seat` is not always the mover's: replenishing gives the
+ * *opponent* a privilege scroll, and reading that as "gained a scroll" under the mover's name says
+ * the opposite of what happened. Deliberately phrased relative to the mover rather than to whoever
+ * is reading, so both players' logs say the same thing about the same move.
  */
-export function describeEffect(effect: Record<string, unknown>): string {
+export function describeEffect(effect: Record<string, unknown>, actorSeat: number): string {
   const kind = String(effect.k);
   switch (kind) {
     case 'tookTokens':
@@ -369,7 +375,10 @@ export function describeEffect(effect: Record<string, unknown>): string {
     case 'privilegeUsed':
       return `spent a scroll for ${String(effect.color)}`;
     case 'replenished':
-      return `replenished ${(effect.placed as unknown[]).length} token(s)`;
+      {
+        const placed = (effect.placed as unknown[]).length;
+        return `replenished ${placed} token${placed === 1 ? '' : 's'}`;
+      }
     case 'purchased': {
       const wild = effect.wildColor ? ` as ${String(effect.wildColor)}` : '';
       return `bought ${cardLabel(effect.cardId as string)}${wild}`;
@@ -390,8 +399,17 @@ export function describeEffect(effect: Record<string, unknown>): string {
         .map(([colour, n]) => `${n} ${colour}`);
       return `discarded ${tokens.join(', ')}`;
     }
-    case 'privilegeGranted':
-      return effect.from === 'none' ? '' : 'gained a scroll';
+    case 'privilegeGranted': {
+      // `from` says where the scroll came from: the pool, or off the other player when the pool is
+      // empty. `seat` says who ended up with it, which is the opponent whenever this came from a
+      // replenish.
+      if (effect.from === 'none') return '';
+      const toMover = effect.seat === actorSeat;
+      if (effect.from === 'opponent') {
+        return toMover ? 'took a scroll from the opponent' : 'opponent took a scroll back';
+      }
+      return toMover ? 'gained a scroll' : 'opponent gained a scroll';
+    }
     case 'abilityResolved':
       return String(effect.ability) === 'playAgain' ? 'takes another turn' : '';
     case 'passed':

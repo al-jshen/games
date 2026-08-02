@@ -86,6 +86,13 @@ export type Snapshot = z.infer<typeof zSnapshot>;
 export const zLogEntry = z.object({
   version: z.number().int(),
   seat: z.number().int(),
+  /**
+   * When the move was applied, epoch ms, by the *server's* clock. Stamped centrally rather than on
+   * arrival at each client, so both players see the same times and a match resumed from disk shows
+   * the same times it showed before -- a client clock that is wrong would otherwise produce a log
+   * that quietly rewrites itself on reload.
+   */
+  at: z.number().int(),
   effects: z.array(z.record(z.string(), z.unknown())),
 });
 export type LogEntry = z.infer<typeof zLogEntry>;
@@ -162,6 +169,8 @@ export const zServerFrame = z.discriminatedUnion('t', [
     /** Echoes the submitter's id so it can retire its pending move; absent for other recipients. */
     clientActionId: z.string().optional(),
     seat: z.number().int(),
+    /** Server clock, matching the `at` this move will carry in the log. */
+    at: z.number().int(),
     effects: z.array(z.record(z.string(), z.unknown())),
   }),
   z.object({

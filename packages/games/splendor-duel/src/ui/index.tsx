@@ -378,6 +378,7 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
           isTurn={myTurn}
           buying={{
             affordable,
+            costOf: (cardId) => effectiveCost(asPlayerState, cardId),
             selectedCardId: buyRef?.t === 'reserved' ? buyRef.cardId : null,
             locked,
             onBuy: (cardId) => setMode({ k: 'buy', ref: { t: 'reserved', cardId } }),
@@ -644,6 +645,8 @@ function takeWarning(colors: (TokenColor | null)[]): string {
 interface ReservedBuying {
   /** Card ids you could pay for right now, for the same highlight the pyramid uses. */
   affordable: ReadonlySet<string>;
+  /** What the card costs after this player's bonuses. Only meaningful for your own reservations. */
+  costOf: (cardId: string) => Partial<Record<PayColor, number>>;
   /** The reserved card currently open in the purchase panel, if any. */
   selectedCardId: string | null;
   locked: boolean;
@@ -737,6 +740,7 @@ function PlayerStrip({
                   key={i}
                   cardId={held.cardId}
                   size="small"
+                  effectiveCost={buying ? buying.costOf(held.cardId) : undefined}
                   affordable={buying ? buying.affordable.has(held.cardId) : false}
                   selected={buying?.selectedCardId === held.cardId}
                   // Reserving a card is only worth doing because you can buy it later, so the

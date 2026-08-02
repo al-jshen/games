@@ -129,14 +129,19 @@ Store `sessionToken`. Presenting it in a later `hello` reclaims this seat.
 
 ### `sync`
 ```json
-{ "t": "sync", "snapshot": { ... }, "log": [ { "version": 1, "seat": 0, "effects": [...] } ] }
+{ "t": "sync", "snapshot": { ... },
+  "log": [ { "version": 1, "seat": 0, "at": 1785704509297, "effects": [...] } ] }
 ```
 Authoritative reset. Drop any local prediction rather than trying to rebase it. `log` is the full
 redacted history, so a reconnecting client can render moves it never saw.
 
+`at` is epoch ms on the **server's** clock, stamped once when the move was applied. Both players get
+the same value, a retried `clientActionId` gets the original rather than the time of the retry, and a
+match rebuilt from disk replays the times it was played at — so a log never quietly rewrites itself.
+
 ### `applied`
 ```json
-{ "t": "applied", "snapshot": { ... }, "seat": 0, "clientActionId": "bot-1-42",
+{ "t": "applied", "snapshot": { ... }, "seat": 0, "at": 1785704509297, "clientActionId": "bot-1-42",
   "effects": [ { "k": "tookTokens", "seat": 0, "cells": [6,7], "colors": ["blue","red"] } ] }
 ```
 Sent to everyone in the room, each with their own redacted snapshot and effects. `clientActionId` is
@@ -145,6 +150,10 @@ echoed **only to the submitter** — the other players have no pending move to r
 `effects` say what *happened*, as opposed to the snapshot's what *is*. Diffing two boards to work out
 which token moved is miserable and ambiguous, so animations, sound, and the move log all read these.
 They are redacted too: a card only you may see arrives as `cardId: null` for your opponent.
+
+An effect's own `seat` is who it happened *to*, which is not always who moved: replenishing in
+Splendor Duel emits `privilegeGranted` for the **opponent's** seat. Anything narrating a log needs
+both that seat and the seat the move is attributed to, or it will credit the wrong player.
 
 ### `rejected`
 ```json

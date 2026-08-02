@@ -127,6 +127,47 @@ describe('actions', () => {
     guest.close();
   });
 
+  it('stamps every move with the server clock, identically for both players', async () => {
+    const before = Date.now();
+    const { host, guest } = await seatedPair();
+    host.send({ t: 'action', expectVersion: 0, clientActionId: 't1', action: { t: 'place', cell: 4 } });
+
+    const mine = await host.next('applied');
+    const theirs = await guest.next('applied');
+    const after = Date.now();
+
+    expect(mine.at).toBeGreaterThanOrEqual(before);
+    expect(mine.at).toBeLessThanOrEqual(after);
+    // One clock reading per move, not one per recipient: two players comparing notes on when
+    // something happened should not find two different answers.
+    expect(theirs.at).toBe(mine.at);
+
+    // ...and the log agrees with the frame that announced the move.
+    const sync = await host.resync();
+    expect(sync.log.at(-1)?.at).toBe(mine.at);
+    expect(sync.log.at(-1)?.version).toBe(1);
+
+    host.close();
+    guest.close();
+  });
+
+  it('reports the original time when a duplicate action is replayed', async () => {
+    const { host, guest } = await seatedPair();
+    const move = { t: 'action', expectVersion: 0, clientActionId: 'dup-at', action: { t: 'place', cell: 2 } };
+    host.send(move);
+    const first = await host.next('applied');
+
+    await new Promise((r) => setTimeout(r, 25));
+    host.send(move);
+    const second = await host.next('applied');
+
+    // A retry must not make one move look like it happened twice at two different times.
+    expect(second.at).toBe(first.at);
+    expect(second.snapshot.version).toBe(first.snapshot.version);
+    host.close();
+    guest.close();
+  });
+
   it('rejects a move from the player who is not to act', async () => {
     const { host, guest } = await seatedPair();
     guest.send({ t: 'action', expectVersion: 0, clientActionId: 'b1', action: { t: 'place', cell: 0 } });
