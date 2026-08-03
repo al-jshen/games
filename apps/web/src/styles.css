@@ -397,6 +397,65 @@ input:focus {
 .log li .dot {
   margin-top: 5px;
 }
+.log-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.log-head h3 {
+  margin: 0;
+}
+
+/*
+ * Borrowed wholesale from Splendor Duel's purchase panel: accent border, panel fill, deep shadow.
+ * Unlike that one this is genuinely modal — it needs an answer from a specific person before the
+ * match can go on — so it centres over the viewport behind a scrim instead of tucking into a corner.
+ */
+.undo-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.undo-dialog {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  max-width: min(460px, 100%);
+}
+.undo-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.undo-body h4 {
+  margin: 0;
+  font-size: 15px;
+}
+.undo-body p {
+  margin: 0;
+  font-size: 13px;
+}
+.undo-move {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
 .log-text {
   flex: 1 1 auto;
   min-width: 0;

@@ -31,6 +31,8 @@ export function Room({ onLeave }: { onLeave: () => void }) {
 
   return (
     <main className="room">
+      <UndoDialog describe={board?.describeEffect} />
+
       <aside className="sidebar">
         <ShareCode code={match.code} waiting={waiting} />
 
@@ -151,11 +153,27 @@ function MoveLog({ describe }: { describe?: EffectDescriber }) {
   const match = useMatch();
   const entries = [...match.log].reverse().slice(0, 40);
   const render = describe ?? describeEffect;
-  if (entries.length === 0) return null;
 
+  const canUndo = match.version > 0 && !match.undo && match.players.length === 2;
   return (
     <section className="panel compact log">
-      <h3>Move log</h3>
+      <div className="log-head">
+        <h3>Move log</h3>
+        <button
+          type="button"
+          className="mini"
+          disabled={!canUndo}
+          title={
+            canUndo
+              ? 'Ask your opponent to agree to take the last move back'
+              : 'Undo needs both players here and at least one move played'
+          }
+          onClick={() => client.requestUndo()}
+        >
+          Undo
+        </button>
+      </div>
+      {entries.length === 0 && <p className="muted">No moves yet.</p>}
       <ol>
         {entries.map((entry) => (
           <li key={entry.version}>
@@ -180,6 +198,76 @@ function MoveTime({ at }: { at: number }) {
     <time className="log-at" dateTime={new Date(at).toISOString()} title={fullMoveTime(at)}>
       {moveTimeLabel(at)}
     </time>
+  );
+}
+
+/**
+ * The undo agreement, shown to both players at once.
+ *
+ * Undo is mutual by design rather than by politeness: in a game with hidden information, taking back
+ * a move after seeing what it revealed is a way to cheat, so the player who would be affected is the
+ * one who has to say yes. That makes the dialog two-sided — one side is asking, the other deciding —
+ * and it is the same dialog either way so that both players are looking at the same words.
+ */
+function UndoDialog({ describe }: { describe?: EffectDescriber }) {
+  const match = useMatch();
+  const undo = match.undo;
+
+  // Escape is the same as declining or withdrawing: it ends the proposal rather than hiding it,
+  // because a dialog you can dismiss locally would leave the other player waiting on a ghost.
+  useEffect(() => {
+    if (!undo) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') client.respondUndo(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo]);
+
+  if (!undo) return null;
+
+  const render = describe ?? describeEffect;
+  const nameOf = (seat: number) => match.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`;
+  const what = undo.effects.map((effect) => render(effect, undo.targetSeat)).filter(Boolean).join(' · ');
+  const mine = undo.by === match.seat;
+  const other = match.players.find((p) => p.seat !== match.seat);
+
+  return (
+    <div className="undo-scrim">
+      <div className="undo-dialog" role="dialog" aria-modal="true" aria-label="Undo the last move">
+        <div className="undo-body">
+          <h4>Undo the last move?</h4>
+          <p className="undo-move">
+            <span className={`dot seat-${undo.targetSeat}`} /> <strong>{nameOf(undo.targetSeat)}</strong>{' '}
+            {what || 'made a move'}
+          </p>
+          {mine ? (
+            <>
+              <p className="muted">
+                Waiting for {other?.name ?? 'your opponent'} to agree. The move stays as it is unless they do.
+              </p>
+              <div className="row">
+                <button type="button" onClick={() => client.respondUndo(false)}>
+                  Withdraw
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="muted">{nameOf(undo.by)} would like to take this back. It happens only if you agree.</p>
+              <div className="row">
+                <button type="button" onClick={() => client.respondUndo(true)}>
+                  Agree
+                </button>
+                <button type="button" className="mini" onClick={() => client.respondUndo(false)}>
+                  Decline
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

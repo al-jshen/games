@@ -151,6 +151,14 @@ Concurrency is two fields on every action: `expectVersion`, so you cannot act on
 not seen, and `clientActionId`, so a double-click or a reconnect-and-resend cannot buy the same card
 twice.
 
+**Undo needs both players to agree.** Either can propose taking the last move back — including the
+opponent's — and a dialog appears on both screens; nothing changes unless the other one accepts. It
+is mutual by design rather than by politeness: in a game with hidden information, taking back a move
+after seeing what it revealed is a way to cheat, so the player who would be affected is the one who
+has to say yes. The rewind is a replay of the action log minus its last entry, which is why it lives
+in the platform and not in any one game — and why it cannot produce a position the rules could not
+have reached. It also un-ends a match whose final move is taken back.
+
 ## Splendor Duel specifics
 
 The board includes a turn guide that lists what you can do right now — derived from the same

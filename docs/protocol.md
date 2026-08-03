@@ -96,6 +96,24 @@ space is combinatorial (Splendor Duel caps how many gold-substitution variants o
 enumerates). Anything valid is still accepted, so construct your own if you want one that is not
 listed.
 
+### `undoRequest`
+```json
+{ "t": "undoRequest" }
+```
+Propose taking the last action back. Either player may ask, including about the *other* player's
+move. Answered with `undoProposed` to both players; nothing changes until the other one agrees.
+
+Refused with `error{code:"ILLEGAL_ACTION"}` when there is no move yet, when a proposal is already
+waiting, or before both seats are filled.
+
+### `undoRespond`
+```json
+{ "t": "undoRespond", "accept": true }
+```
+Answer a pending proposal. `accept: false` from either player ends it — the responder declining or
+the proposer withdrawing. `accept: true` is only meaningful from the *other* player: asking was the
+proposer's agreement, and a second yes from them is refused.
+
 ### `resync`
 ```json
 { "t": "resync" }
@@ -170,6 +188,31 @@ the Python SDK gives up after 12 consecutive ones instead of spinning forever.
 ```json
 { "t": "legal", "version": 7, "actions": [ ... ], "truncated": false }
 ```
+
+### `undoProposed`
+```json
+{ "t": "undoProposed", "by": 0, "targetSeat": 0, "atVersion": 7,
+  "effects": [ { "k": "tookTokens", "seat": 0, "cells": [6,7], "colors": ["blue","red"] } ] }
+```
+Sent to **both** players, so both can show the same thing: one is asking, the other deciding. `by` is
+who asked, `targetSeat` is whose move is on the table — they differ when you propose undoing your
+opponent's move. `effects` are the move in question, redacted per recipient, so each side can name it
+in the game's own words rather than as a raw action.
+
+A proposal is dropped, with `undoResolved`, when a move is applied (it was about a position that no
+longer exists), when either player disconnects, or after three minutes.
+
+### `undoResolved`
+```json
+{ "t": "undoResolved", "accepted": true, "by": 1 }
+```
+Closes the question on both sides. `by` is whoever settled it, absent if it simply lapsed; `reason`
+carries a short explanation when there is one.
+
+**An accepted undo is followed by `sync`.** `undoResolved` only reports the decision — the rewind
+arrives through the one path that already tells clients to drop local state and adopt the server's.
+Note that `sync` will carry a **lower** `version` than before, which is the one case where the
+version moves backwards; a client must not assume it only ever increases.
 
 ### `presence`
 ```json

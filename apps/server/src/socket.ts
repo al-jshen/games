@@ -8,7 +8,7 @@ import {
 } from '@games/protocol';
 import type { WebSocket, WebSocketServer } from 'ws';
 import { gameCatalog } from './registry.js';
-import type { Connection, Room, RoomRegistry } from './rooms.js';
+import type { Connection, PendingUndo, Room, RoomRegistry } from './rooms.js';
 import type { ReplayStore } from './replay-store.js';
 import { verifyToken } from './sessions.js';
 import { reportStoreError } from './store-errors.js';
@@ -85,6 +85,36 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
     for (const holder of room.seats) {
       for (const conn of holder.sockets) {
         conn.send({ t: 'sync', snapshot: room.snapshot(holder.seat), log: room.redactedLog(holder.seat) });
+      }
+    }
+  };
+
+  /** Both players see the proposal: one is asking, the other is deciding. */
+  const broadcastUndoProposed = (room: Room, pending: PendingUndo): void => {
+    for (const holder of room.seats) {
+      for (const conn of holder.sockets) {
+        conn.send({
+          t: 'undoProposed',
+          by: pending.by,
+          targetSeat: pending.targetSeat,
+          atVersion: pending.atVersion,
+          // Redacted per recipient, like every other effect that leaves here: the move being taken
+          // back may have revealed a card only one of them is allowed to see.
+          effects: room.redactEffects(holder.seat, pending.effects) as Record<string, unknown>[],
+        });
+      }
+    }
+  };
+
+  const broadcastUndoResolved = (room: Room, accepted: boolean, by?: Seat, reason?: string): void => {
+    for (const holder of room.seats) {
+      for (const conn of holder.sockets) {
+        conn.send({
+          t: 'undoResolved',
+          accepted,
+          ...(by === undefined ? {} : { by }),
+          ...(reason === undefined ? {} : { reason }),
+        });
       }
     }
   };
@@ -349,6 +379,60 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
           return;
         }
 
+        case 'undoRequest': {
+          const { room, seat } = state;
+          if (!room || seat === null) {
+            fail(ws, ErrorCodes.NOT_IN_MATCH, 'Join a match first.');
+            return;
+          }
+          const proposed = room.proposeUndo(seat);
+          if (!proposed.ok) {
+            fail(ws, proposed.code, proposed.message);
+            return;
+          }
+          broadcastUndoProposed(room, proposed.pending);
+          return;
+        }
+
+        case 'undoRespond': {
+          const { room, seat } = state;
+          if (!room || seat === null) {
+            fail(ws, ErrorCodes.NOT_IN_MATCH, 'Join a match first.');
+            return;
+          }
+          const pending = room.pendingUndo;
+          if (!pending) {
+            // Most likely both players answered at once, or a move overtook the proposal.
+            fail(ws, ErrorCodes.ILLEGAL_ACTION, 'There is no undo waiting for an answer.');
+            return;
+          }
+
+          if (!frame.accept) {
+            // Either side may end it: the responder declining, or the proposer withdrawing.
+            room.cancelUndo();
+            broadcastUndoResolved(room, false, seat);
+            return;
+          }
+
+          if (seat === pending.by) {
+            // Asking for it was the agreement; a second yes from the same player is not consent.
+            fail(ws, ErrorCodes.ILLEGAL_ACTION, 'You proposed this undo; it needs the other player.');
+            return;
+          }
+
+          if (!room.applyUndo()) {
+            fail(ws, ErrorCodes.ILLEGAL_ACTION, 'There is no move left to undo.');
+            broadcastUndoResolved(room, false, seat, 'nothing left to undo');
+            return;
+          }
+          broadcastUndoResolved(room, true, seat);
+          // A full sync rather than a diff: the version has gone *backwards*, which is exactly the
+          // case every client is told to handle by dropping local state and adopting ours.
+          broadcastSync(room);
+          savePoint(room);
+          return;
+        }
+
         case 'resync': {
           const { room, seat } = state;
           if (!room || seat === null) {
@@ -382,6 +466,15 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
       // A dropped connection in a turn-based game is almost always a closed lid or a tunnel, so the
       // match pauses and the seat is held rather than forfeited.
       broadcastPresence(room);
+
+      /*
+       * An undo needs both players present to settle. If either has gone, withdraw it and say why,
+       * rather than leaving the other staring at a dialog waiting on someone who is not there.
+       */
+      if (room.pendingUndo && room.connectedCount < room.seats.length) {
+        room.cancelUndo();
+        broadcastUndoResolved(room, false, undefined, 'the other player disconnected');
+      }
     });
 
     ws.on('error', () => {

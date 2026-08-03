@@ -80,6 +80,11 @@ Two mistakes worth avoiding, both of which Splendor Duel demonstrates:
 
 Preserve array **lengths** when masking identities — emit a placeholder, never a shorter array.
 
+You get undo for free, and should not implement one. A match is its seed plus its action log, so the
+platform takes a move back by dropping the last entry and replaying through *your* reducer — which
+means the result is always a position your own rules produced. The only thing a game contributes is
+`describeEffect`, so the agreement dialog can say what is about to be taken back.
+
 ## 3. Register it
 
 ```ts

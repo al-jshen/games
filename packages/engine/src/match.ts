@@ -175,6 +175,38 @@ export function replay<S, A, V, O>(
   return { state, version, log };
 }
 
+/**
+ * Take back the last action.
+ *
+ * Undo lives here, at the platform layer, rather than in any individual game: a match *is* its seed
+ * plus its action log, so taking a move back is dropping the last entry and replaying — which works
+ * for every game without one of them writing a line of code, and cannot produce a state the rules
+ * could not have reached, because the rules are what rebuild it.
+ *
+ * Returns `null` when there is nothing to take back. `finishedAt` and `outcome` are recomputed
+ * rather than carried over, so undoing the move that ended a match genuinely un-ends it.
+ */
+export function undoLast<S, A, V, O>(
+  mod: GameModule<S, A, V, O>,
+  match: LiveMatch<S>,
+): { match: LiveMatch<S>; log: ReplayedTurn[]; undone: LoggedAction } | null {
+  const undone = match.record.actions.at(-1);
+  if (!undone) return null;
+
+  const record: MatchRecord = { ...match.record, actions: match.record.actions.slice(0, -1) };
+  delete record.finishedAt;
+  delete record.outcome;
+
+  const { state, version, log } = replay(mod, record);
+  const outcome = mod.outcome(state);
+  if (outcome.status === 'over') {
+    // Undoing one move of a match that was already over by an earlier move: still over.
+    record.finishedAt = record.actions.at(-1)?.at ?? record.createdAt;
+    record.outcome = outcome;
+  }
+  return { match: { record, state, version }, log, undone };
+}
+
 /** One replayed action's contribution to the move log. */
 export interface ReplayedTurn {
   version: number;

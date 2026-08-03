@@ -47,6 +47,23 @@ export interface MatchState {
   pending: boolean;
   /** Server-enumerated legal actions, populated only after `requestLegalActions()`. */
   legal: { version: number; actions: unknown[]; truncated: boolean } | null;
+  /**
+   * An undo waiting on agreement. Set on both players: the proposer is waiting, the other is being
+   * asked. `null` whenever nothing is on the table.
+   */
+  undo: PendingUndoState | null;
+  /** How the last undo ended, for a one-line note after the dialog closes. */
+  lastUndo: { accepted: boolean; by?: number; reason?: string } | null;
+}
+
+export interface PendingUndoState {
+  /** Who proposed it. Compare with your own seat to know whether you are asking or answering. */
+  by: number;
+  /** Whose move is on the table. */
+  targetSeat: number;
+  atVersion: number;
+  /** Effects of the move in question, redacted for you, ready for the game's own describer. */
+  effects: Record<string, unknown>[];
 }
 
 /**
@@ -107,6 +124,8 @@ export class GameClient {
     actors: [],
     players: [],
     log: [],
+    undo: null,
+    lastUndo: null,
     error: null,
     pending: false,
     legal: null,
@@ -279,6 +298,34 @@ export class GameClient {
         this.patch({ legal: { version: frame.version, actions: frame.actions, truncated: frame.truncated } });
         return;
 
+      case 'undoProposed':
+        this.patch({
+          undo: {
+            by: frame.by,
+            targetSeat: frame.targetSeat,
+            atVersion: frame.atVersion,
+            effects: frame.effects,
+          },
+          lastUndo: null,
+        });
+        return;
+
+      case 'undoResolved':
+        /*
+         * Only closes the dialog. An accepted undo also brings a `sync`, and that is what actually
+         * rewinds the board -- so the state change arrives through the one path that already knows
+         * how to drop local prediction and adopt the server's word.
+         */
+        this.patch({
+          undo: null,
+          lastUndo: {
+            accepted: frame.accepted,
+            ...(frame.by === undefined ? {} : { by: frame.by }),
+            ...(frame.reason === undefined ? {} : { reason: frame.reason }),
+          },
+        });
+        return;
+
       case 'presence':
         this.patch({ players: frame.players });
         return;
@@ -358,6 +405,16 @@ export class GameClient {
 
   requestLegalActions(): void {
     this.send({ t: 'legalActions' });
+  }
+
+  /** Propose taking the last move back. Does nothing until the other player agrees. */
+  requestUndo(): void {
+    this.send({ t: 'undoRequest' });
+  }
+
+  /** Answer a proposal — or, if you are the one who proposed it, withdraw it with `false`. */
+  respondUndo(accept: boolean): void {
+    this.send({ t: 'undoRespond', accept });
   }
 
   resync(): void {

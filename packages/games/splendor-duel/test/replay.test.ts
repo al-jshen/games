@@ -1,4 +1,4 @@
-import { RandomCursor, createMatch, isJsonRoundTrippable, replay, step } from '@games/engine';
+import { RandomCursor, createMatch, isJsonRoundTrippable, replay, step, undoLast } from '@games/engine';
 import { describe, expect, it } from 'vitest';
 import { splendorDuel } from '../src/index.js';
 import type { SplendorAction, SplendorState } from '../src/types.js';
@@ -111,3 +111,105 @@ describe('replay', () => {
 
 /** A type-level reminder that the log stores actions, not internal state. */
 export type LoggedSplendorAction = SplendorAction;
+
+describe('undo', () => {
+  /**
+   * Undo is a platform operation, not a rule: it drops the last logged action and replays. The
+   * consequence worth testing is that it cannot invent a position — whatever comes back is a state
+   * the reducer itself produced, because the reducer is what rebuilt it.
+   */
+  function playSome(seed: string, moves: number) {
+    let live = createMatch(splendorDuel, {
+      matchId: `m-${seed}`,
+      code: 'UNDO01',
+      seed,
+      seats: [0, 1],
+      options: {},
+      now: 1_000,
+    });
+    const rng = new RandomCursor(`${seed}:undo`, 0);
+    const snapshots: { version: number; state: string }[] = [
+      { version: live.version, state: JSON.stringify(live.state) },
+    ];
+    for (let i = 0; i < moves; i++) {
+      const seat = splendorDuel.currentActors(live.state)[0];
+      if (seat === undefined) break;
+      const { actions } = splendorDuel.legalActions(live.state, seat);
+      if (actions.length === 0) break;
+      const result = step(splendorDuel, live, seat, actions[rng.int(actions.length)]!, 2_000 + i);
+      if (!result.ok) break;
+      live = result.match;
+      snapshots.push({ version: live.version, state: JSON.stringify(live.state) });
+    }
+    return { live, snapshots };
+  }
+
+  it('returns the position to exactly what it was before the last move', () => {
+    const { live, snapshots } = playSome('undo-exact', 12);
+    expect(live.version).toBeGreaterThan(4);
+
+    const undone = undoLast(splendorDuel, live);
+    expect(undone).not.toBeNull();
+    const previous = snapshots[snapshots.length - 2]!;
+    expect(undone!.match.version).toBe(previous.version);
+    // Byte-identical, not merely equivalent: this is a replay, so anything else would mean the
+    // reducer is not deterministic.
+    expect(JSON.stringify(undone!.match.state)).toBe(previous.state);
+    expect(undone!.match.record.actions).toHaveLength(live.record.actions.length - 1);
+    expect(undone!.undone).toEqual(live.record.actions.at(-1));
+  });
+
+  it('gives back a move log that matches the actions that are left', () => {
+    const { live } = playSome('undo-log', 10);
+    const undone = undoLast(splendorDuel, live)!;
+    expect(undone.log).toHaveLength(undone.match.record.actions.length);
+    expect(undone.log.map((e) => e.version)).toEqual(undone.match.record.actions.map((a) => a.version));
+    // The timestamps are the original ones, not the moment of the undo.
+    expect(undone.log.map((e) => e.at)).toEqual(undone.match.record.actions.map((a) => a.at));
+  });
+
+  it('rewinds all the way to the opening position, one move at a time', () => {
+    const played = playSome('undo-all', 9);
+    const opening = played.snapshots[0]!;
+    let live = played.live;
+    for (let guard = 0; guard < 50 && live.record.actions.length > 0; guard++) {
+      live = undoLast(splendorDuel, live)!.match;
+    }
+    expect(live.version).toBe(0);
+    expect(JSON.stringify(live.state)).toBe(opening.state);
+    // Nothing left to take back.
+    expect(undoLast(splendorDuel, live)).toBeNull();
+  });
+
+  it('un-ends a match whose last move ended it', () => {
+    // Play to a genuine finish, then take the winning move back.
+    let live = createMatch(splendorDuel, {
+      matchId: 'm-undo-over',
+      code: 'UNDO02',
+      seed: 'undo-over',
+      seats: [0, 1],
+      options: { maxTurnsWithoutPurchase: 80 },
+      now: 1_000,
+    });
+    const rng = new RandomCursor('undo-over:pol', 0);
+    for (let i = 0; i < 3000; i++) {
+      const seat = splendorDuel.currentActors(live.state)[0];
+      if (seat === undefined) break;
+      const { actions } = splendorDuel.legalActions(live.state, seat);
+      if (actions.length === 0) break;
+      const result = step(splendorDuel, live, seat, actions[rng.int(actions.length)]!, 2_000 + i);
+      if (!result.ok) break;
+      live = result.match;
+    }
+    expect(splendorDuel.outcome(live.state).status).toBe('over');
+    expect(live.record.finishedAt).toBeDefined();
+    expect(live.record.outcome).toBeDefined();
+
+    const undone = undoLast(splendorDuel, live)!;
+    expect(splendorDuel.outcome(undone.match.state).status).toBe('active');
+    // The record must not go on claiming the match is finished, or a resumed copy of it would come
+    // back over while the board says otherwise.
+    expect(undone.match.record.finishedAt).toBeUndefined();
+    expect(undone.match.record.outcome).toBeUndefined();
+  });
+});

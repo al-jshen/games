@@ -3,6 +3,7 @@ import {
   createMatch,
   replay,
   step,
+  undoLast,
   type AnyGameModule,
   type Effect,
   type LiveMatch,
@@ -32,6 +33,11 @@ const ABANDONED_TTL_MS = 60 * 60 * 1000;
 const FINISHED_TTL_MS = 10 * 60 * 1000;
 /** Bound on remembered idempotency keys per seat. */
 const DEDUPE_LIMIT = 64;
+/**
+ * How long an unanswered undo proposal stands. Long enough for someone to look up from their coffee,
+ * short enough that a proposal left hanging by a closed tab does not block the next one for ever.
+ */
+const UNDO_PROPOSAL_TTL_MS = 3 * 60 * 1000;
 
 export interface Connection {
   send(frame: unknown): void;
@@ -58,6 +64,18 @@ interface AppliedResult {
   effects: Effect[];
 }
 
+/** An undo waiting on the other player's agreement. */
+export interface PendingUndo {
+  by: Seat;
+  /** Whose move is on the table. Either player may propose, including about their opponent's move. */
+  targetSeat: Seat;
+  /** The version the proposal was made against; any move makes it stale. */
+  atVersion: number;
+  /** Effects of the move in question, so both clients can describe what is being taken back. */
+  effects: Effect[];
+  requestedAt: number;
+}
+
 export type RoomStatus = 'lobby' | 'active' | 'finished';
 
 export class Room {
@@ -72,6 +90,8 @@ export class Room {
   readonly log: { version: number; seat: Seat; at: number; effects: Effect[] }[] = [];
   private readonly dedupe = new Map<string, AppliedResult>();
   status: RoomStatus = 'lobby';
+  /** Set while an undo is waiting on the other player. At most one at a time. */
+  pendingUndo: PendingUndo | null = null;
   lastActivity = Date.now();
   createdAt = Date.now();
   /** True for a room rebuilt from disk rather than started here. Informational; used in logs. */
@@ -308,7 +328,73 @@ export class Room {
     this.remember(seat, clientActionId, { version: this.match.version, at, effects: result.effects });
     this.lastActivity = at;
     if (result.outcome.status === 'over') this.status = 'finished';
+    // A move moves the goalposts: whatever undo was on the table was about a different position.
+    this.pendingUndo = null;
     return { ok: true, effects: result.effects, at };
+  }
+
+  /** Discard a proposal nobody ever answered, so it cannot block the next one indefinitely. */
+  private expireStaleUndo(now: number): void {
+    if (this.pendingUndo && now - this.pendingUndo.requestedAt > UNDO_PROPOSAL_TTL_MS) {
+      this.pendingUndo = null;
+    }
+  }
+
+  /**
+   * Put an undo to the other player. Nothing changes until they agree.
+   *
+   * Mutual agreement rather than a unilateral take-back: in a two-player game with hidden
+   * information, undoing a move you have already seen the consequences of is a way to cheat, so the
+   * player who stands to lose by it is the one who has to say yes.
+   */
+  proposeUndo(seat: Seat, now = Date.now()): { ok: true; pending: PendingUndo } | { ok: false; code: string; message: string } {
+    this.expireStaleUndo(now);
+    if (this.pendingUndo) {
+      return { ok: false, code: ErrorCodes.ILLEGAL_ACTION, message: 'An undo is already waiting for an answer.' };
+    }
+    const last = this.log.at(-1);
+    const lastAction = this.match.record.actions.at(-1);
+    if (!last || !lastAction) {
+      return { ok: false, code: ErrorCodes.ILLEGAL_ACTION, message: 'There is no move to undo yet.' };
+    }
+    if (this.seats.length < this.maxSeats) {
+      // With nobody to agree, "mutual" would mean "unilateral".
+      return { ok: false, code: ErrorCodes.ILLEGAL_ACTION, message: 'Wait for both players before undoing.' };
+    }
+    this.pendingUndo = {
+      by: seat,
+      targetSeat: lastAction.seat,
+      atVersion: this.match.version,
+      effects: last.effects,
+      requestedAt: now,
+    };
+    this.lastActivity = now;
+    return { ok: true, pending: this.pendingUndo };
+  }
+
+  cancelUndo(): void {
+    this.pendingUndo = null;
+  }
+
+  /**
+   * Carry out an agreed undo: rewind the match by one action and rebuild everything derived from it.
+   *
+   * The move log is rebuilt from the replay rather than popped, so it cannot drift from the actions
+   * that produced it, and the idempotency cache is cleared — otherwise a client resending the
+   * undone action's id would be handed the old result and the move would silently come back.
+   */
+  applyUndo(): boolean {
+    const result = undoLast(this.mod as never, this.match as never);
+    this.pendingUndo = null;
+    if (!result) return false;
+
+    this.match = result.match as LiveMatch<unknown>;
+    this.log.length = 0;
+    this.log.push(...result.log);
+    this.dedupe.clear();
+    this.lastActivity = Date.now();
+    this.status = this.outcome().status === 'over' ? 'finished' : this.full ? 'active' : 'lobby';
+    return true;
   }
 
   /** Nothing has happened here worth a row on disk: a lobby whose second player never arrived. */

@@ -127,6 +127,16 @@ export const zClientFrame = z.discriminatedUnion('t', [
   }),
   /** Ask the server to enumerate legal actions. Essential for bots that can't run the reducer. */
   z.object({ t: z.literal('legalActions') }),
+  /**
+   * Propose undoing the last action in the match. Takes effect only once the other player agrees,
+   * so this is a request, not a command — see `undoProposed` / `undoResolved`.
+   */
+  z.object({ t: z.literal('undoRequest') }),
+  /**
+   * Answer a pending proposal. The other player accepts or declines; the proposer may send
+   * `accept: false` to withdraw their own request.
+   */
+  z.object({ t: z.literal('undoRespond'), accept: z.boolean() }),
   /** Request a fresh snapshot, e.g. after a suspected desync. */
   z.object({ t: z.literal('resync') }),
   z.object({ t: z.literal('ping') }),
@@ -187,6 +197,24 @@ export const zServerFrame = z.discriminatedUnion('t', [
     actions: z.array(z.unknown()),
     /** True when the list was capped and is not exhaustive. */
     truncated: z.boolean(),
+  }),
+  z.object({
+    t: z.literal('undoProposed'),
+    /** Who asked. */
+    by: z.number().int(),
+    /** Whose move would be undone — not always the same player, since either may propose. */
+    targetSeat: z.number().int(),
+    /** The version the proposal applies to. Any move invalidates it. */
+    atVersion: z.number().int(),
+    /** Effects of the move in question, redacted for the recipient, so each side can name it. */
+    effects: z.array(z.record(z.string(), z.unknown())),
+  }),
+  z.object({
+    t: z.literal('undoResolved'),
+    accepted: z.boolean(),
+    /** Who settled it: the responder, the proposer withdrawing, or absent if it lapsed. */
+    by: z.number().int().optional(),
+    reason: z.string().optional(),
   }),
   z.object({ t: z.literal('presence'), players: z.array(zPlayerInfo) }),
   z.object({ t: z.literal('over'), snapshot: zSnapshot }),

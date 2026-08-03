@@ -85,7 +85,12 @@ class GameConnection:
                 self.log = frame.get("log", [])
             elif kind == "applied":
                 self.log.append(
-                    {"version": frame["snapshot"]["version"], "seat": frame["seat"], "effects": frame["effects"]}
+                    {
+                        "version": frame["snapshot"]["version"],
+                        "seat": frame["seat"],
+                        "at": frame.get("at"),
+                        "effects": frame["effects"],
+                    }
                 )
         return frame
 
@@ -193,6 +198,20 @@ class GameConnection:
         if frame["t"] == "rejected":
             raise Rejected(frame["code"], frame["message"], frame.get("snapshot"))
         return frame
+
+    def request_undo(self) -> None:
+        """Propose taking the last move back. Nothing happens unless the other player agrees."""
+        self.ws.send_json({"t": "undoRequest"})
+
+    def respond_undo(self, accept: bool) -> None:
+        """Answer a pending ``undoProposed`` -- or withdraw your own request with ``False``.
+
+        A bot that never calls this simply lets proposals lapse, which reads to the other player as
+        no answer rather than as a refusal. If you want a bot that plays along, wait for
+        ``undoProposed`` and call this; ``undoResolved`` says how it ended, and an accepted undo is
+        followed by a ``sync`` that rewinds the board.
+        """
+        self.ws.send_json({"t": "undoRespond", "accept": accept})
 
     def wait_for_turn(self, timeout: Optional[float] = None) -> None:
         """Block until this seat may act, or the match ends."""

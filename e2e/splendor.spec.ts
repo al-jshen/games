@@ -317,6 +317,86 @@ test.describe('reserved cards', () => {
   });
 });
 
+test.describe('undo by agreement', () => {
+  test('asks both players, and rewinds both boards when the other agrees', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    // Nothing to take back yet.
+    await expect(host.getByRole('button', { name: 'Undo' })).toBeDisabled();
+
+    const mover = (await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host : guest;
+    const other = mover === host ? guest : host;
+    await mover.locator('.token-board .cell-selectable').first().click();
+    await mover.getByRole('button', { name: /^Take/ }).click();
+    await expect(mover.locator('.log li')).toHaveCount(1);
+    const tokensAfterMove = await mover.locator('.sd-player').last().locator('.sd-tokens svg').count();
+
+    // Either player may ask; here it is the one who moved, regretting it.
+    await expect(mover.getByRole('button', { name: 'Undo' })).toBeEnabled();
+    await mover.getByRole('button', { name: 'Undo' }).click();
+
+    // The point of the feature: it appears on *both* screens.
+    const askerDialog = mover.getByRole('dialog', { name: 'Undo the last move' });
+    const deciderDialog = other.getByRole('dialog', { name: 'Undo the last move' });
+    await expect(askerDialog).toBeVisible();
+    await expect(deciderDialog).toBeVisible();
+    // Each side is shown what would be taken back, named in the game's own words.
+    await expect(deciderDialog).toContainText('took');
+    // One side waits, the other decides.
+    await expect(askerDialog.getByRole('button', { name: 'Withdraw' })).toBeVisible();
+    await expect(deciderDialog.getByRole('button', { name: 'Agree' })).toBeVisible();
+    await expect(deciderDialog.getByRole('button', { name: 'Decline' })).toBeVisible();
+
+    await deciderDialog.getByRole('button', { name: 'Agree' }).click();
+
+    // Both dialogs close, both logs lose the move, and the tokens go back on the board.
+    await expect(askerDialog).toBeHidden();
+    await expect(deciderDialog).toBeHidden();
+    await expect(mover.locator('.log li')).toHaveCount(0);
+    await expect(other.locator('.log li')).toHaveCount(0);
+    await expect(mover.locator('.sd-player').last().locator('.sd-tokens svg')).not.toHaveCount(tokensAfterMove);
+    // It is the mover's turn again, so the move can simply be replayed.
+    await expect(mover.locator('.sd-guide')).toContainText('Your turn');
+    expect(problemsOf(mover)).toEqual([]);
+    expect(problemsOf(other)).toEqual([]);
+
+    await host.close();
+    await guest.close();
+  });
+
+  test('declining leaves the move standing', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    const mover = (await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host : guest;
+    const other = mover === host ? guest : host;
+    await mover.locator('.token-board .cell-selectable').first().click();
+    await mover.getByRole('button', { name: /^Take/ }).click();
+    await expect(mover.locator('.log li')).toHaveCount(1);
+
+    await mover.getByRole('button', { name: 'Undo' }).click();
+    await expect(other.getByRole('dialog', { name: 'Undo the last move' })).toBeVisible();
+    await other.getByRole('dialog', { name: 'Undo the last move' }).getByRole('button', { name: 'Decline' }).click();
+
+    // Both dialogs close and the board is untouched.
+    await expect(mover.getByRole('dialog', { name: 'Undo the last move' })).toBeHidden();
+    await expect(other.getByRole('dialog', { name: 'Undo the last move' })).toBeHidden();
+    await expect(mover.locator('.log li')).toHaveCount(1);
+    // Asking again is allowed after a refusal.
+    await expect(mover.getByRole('button', { name: 'Undo' })).toBeEnabled();
+
+    await host.close();
+    await guest.close();
+  });
+});
+
 test.describe('session resilience', () => {
   test('a refresh puts you back in your seat with the game intact', async ({ browser }) => {
     const host = await openPlayer(browser, 'Ann');
