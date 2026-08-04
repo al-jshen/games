@@ -151,6 +151,10 @@ Concurrency is two fields on every action: `expectVersion`, so you cannot act on
 not seen, and `clientActionId`, so a double-click or a reconnect-and-resend cannot buy the same card
 twice.
 
+**There is a chat box** under the move log. Messages are kept with the match rather than in memory,
+so they come back on a reload and survive a restart — a game you put down for a week should not lose
+what was said in it. The last 200 are kept, and the replay endpoint does not serve them.
+
 **Undo needs both players to agree.** Either can propose taking the last move back — including the
 opponent's — and a dialog appears on both screens; nothing changes unless the other one accepts. It
 is mutual by design rather than by politeness: in a game with hidden information, taking back a move

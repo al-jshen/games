@@ -30,6 +30,26 @@ export interface MatchRecord {
    * it, a resumed match is a board nobody is allowed to touch.
    */
   players?: RecordedPlayer[];
+  /**
+   * What the players said to each other. Kept with the match for the same reason the seating is:
+   * a game can be put down and picked up days later, and a conversation that vanished when the room
+   * left memory would be stranger than one that did not. Capped by the server.
+   *
+   * Not part of the game state and never fed to a reducer — replay does not read it, and a rule
+   * change cannot invalidate it.
+   */
+  chat?: ChatMessage[];
+}
+
+/** One line of table talk. */
+export interface ChatMessage {
+  /** Per-match sequence, so ordering and de-duplication do not depend on clocks. */
+  id: number;
+  seat: Seat;
+  /** The sender's name as it was when they said it. */
+  name: string;
+  at: number;
+  text: string;
 }
 
 /** A seat's occupant, as persisted. `playerId` is what a session token is checked against. */

@@ -83,6 +83,16 @@ export const zSnapshot = z.object({
 export type Snapshot = z.infer<typeof zSnapshot>;
 
 /** One entry of the move log. Effects are already redacted for the recipient. */
+/** One chat line, as broadcast. */
+export const zChatMessage = z.object({
+  id: z.number().int(),
+  seat: z.number().int(),
+  name: z.string(),
+  at: z.number().int(),
+  text: z.string(),
+});
+export type ChatMessage = z.infer<typeof zChatMessage>;
+
 export const zLogEntry = z.object({
   version: z.number().int(),
   seat: z.number().int(),
@@ -139,6 +149,11 @@ export const zClientFrame = z.discriminatedUnion('t', [
   z.object({ t: z.literal('undoRespond'), accept: z.boolean() }),
   /** Request a fresh snapshot, e.g. after a suspected desync. */
   z.object({ t: z.literal('resync') }),
+  /**
+   * Say something to the other player. Length is bounded here rather than only in the UI, because
+   * the UI is not the only thing that can send it.
+   */
+  z.object({ t: z.literal('chat'), text: z.string().min(1).max(500) }),
   z.object({ t: z.literal('ping') }),
 ]);
 export type ClientFrame = z.infer<typeof zClientFrame>;
@@ -172,7 +187,13 @@ export const zServerFrame = z.discriminatedUnion('t', [
     /** Store this; presenting it in a later `hello` reclaims this seat after a refresh. */
     sessionToken: z.string(),
   }),
-  z.object({ t: z.literal('sync'), snapshot: zSnapshot, log: z.array(zLogEntry) }),
+  z.object({
+    t: z.literal('sync'),
+    snapshot: zSnapshot,
+    log: z.array(zLogEntry),
+    /** The whole conversation, so a client that has just connected is not missing half of it. */
+    chat: z.array(zChatMessage).optional(),
+  }),
   z.object({
     t: z.literal('applied'),
     snapshot: zSnapshot,
@@ -216,6 +237,7 @@ export const zServerFrame = z.discriminatedUnion('t', [
     by: z.number().int().optional(),
     reason: z.string().optional(),
   }),
+  z.object({ t: z.literal('chat'), message: zChatMessage }),
   z.object({ t: z.literal('presence'), players: z.array(zPlayerInfo) }),
   z.object({ t: z.literal('over'), snapshot: zSnapshot }),
   z.object({ t: z.literal('error'), code: z.string(), message: z.string() }),

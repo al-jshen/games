@@ -96,6 +96,15 @@ space is combinatorial (Splendor Duel caps how many gold-substitution variants o
 enumerates). Anything valid is still accepted, so construct your own if you want one that is not
 listed.
 
+### `chat`
+```json
+{ "t": "chat", "text": "your move" }
+```
+Say something to the other player. Bounded at 500 characters by the schema, not only by the UI.
+Whitespace is collapsed and an empty result is dropped rather than delivered as a blank line. Capped
+at 20 messages per socket per second — a runaway loop can wedge a single-threaded process just as
+easily with chat as with actions, and chat is not covered by `ACTION_RATE_LIMIT`.
+
 ### `undoRequest`
 ```json
 { "t": "undoRequest" }
@@ -148,7 +157,8 @@ Store `sessionToken`. Presenting it in a later `hello` reclaims this seat.
 ### `sync`
 ```json
 { "t": "sync", "snapshot": { ... },
-  "log": [ { "version": 1, "seat": 0, "at": 1785704509297, "effects": [...] } ] }
+  "log": [ { "version": 1, "seat": 0, "at": 1785704509297, "effects": [...] } ],
+  "chat": [ { "id": 1, "seat": 0, "name": "Ada", "at": 1785704509297, "text": "good luck" } ] }
 ```
 Authoritative reset. Drop any local prediction rather than trying to rebase it. `log` is the full
 redacted history, so a reconnecting client can render moves it never saw.
@@ -188,6 +198,20 @@ the Python SDK gives up after 12 consecutive ones instead of spinning forever.
 ```json
 { "t": "legal", "version": 7, "actions": [ ... ], "truncated": false }
 ```
+
+### `chat` (server)
+```json
+{ "t": "chat", "message": { "id": 7, "seat": 0, "name": "Ada", "at": 1785704509297, "text": "your move" } }
+```
+Broadcast to both players, sender included, so nobody keeps a local copy that can drift from the
+other's. `id` is a per-match sequence: ordering and de-duplication do not depend on clocks, and a
+client that receives both a `sync` and an overlapping broadcast after reconnecting can tell.
+
+The conversation is stored **with the match**, so it comes back on `sync` and survives eviction and a
+restart — a game you can put down for a week should not lose what was said in it. It is capped at 200
+messages, because the record is rewritten whole after every move. It is deliberately **not** served by
+`/api/matches/:code/replay`: the seed is fair game once a match is over, but two people talking to
+each other did not agree to publish it to anyone holding the room code.
 
 ### `undoProposed`
 ```json

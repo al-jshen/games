@@ -14,25 +14,30 @@ export function isRealTimestamp(at: number): boolean {
 }
 
 /**
- * The short label shown in the log.
+ * The short label shown beside a move or a message.
  *
- * Seconds are included: turns in a duel are often seconds apart, and a log where three moves all
- * say "2:07 PM" cannot tell you what order they happened in — which is most of what a log is for.
+ * Moves get seconds: turns in a duel are often seconds apart, and a log where three of them all say
+ * "2:07 PM" cannot tell you what order they happened in — which is most of what a log is for.
+ * Messages do not, because their order is plain from where they sit and the sidebar is only 250px
+ * wide, where eight characters of timestamp is real estate taken from what somebody said.
  *
- * A move from another day shows its date instead of its time. The log column is narrow and a full
+ * Anything from another day shows its date instead of its time. The column is narrow and a full
  * date-and-time would not fit; the exact moment is one hover away in `fullMoveTime`, and knowing
  * *which day* matters more at a glance than knowing the second, now that a match can be put down
  * and picked up a week later.
  */
-export function moveTimeLabel(at: number, now: Date = new Date()): string {
+export function moveTimeLabel(at: number, now: Date = new Date(), withSeconds = true): string {
   const when = new Date(at);
   const sameDay =
     when.getFullYear() === now.getFullYear() &&
     when.getMonth() === now.getMonth() &&
     when.getDate() === now.getDate();
-  return sameDay
-    ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })
-    : when.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (!sameDay) return when.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return when.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(withSeconds ? { second: '2-digit' } : {}),
+  });
 }
 
 /** The whole thing, for the tooltip: date and time to the second, however the locale writes it. */

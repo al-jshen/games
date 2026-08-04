@@ -23,6 +23,8 @@ interface SocketState {
   seat: Seat | null;
   /** A coarse flood guard, so a runaway loop cannot wedge the process. */
   actionTimes: number[];
+  /** The same idea for chat, which is not an action and so is not covered by that budget. */
+  chatTimes: number[];
 }
 
 /**
@@ -36,6 +38,8 @@ interface SocketState {
  */
 const ACTION_WINDOW_MS = 1000;
 const DEFAULT_ACTION_LIMIT = 1000;
+/** Chat messages per socket per second. Far above human typing; this is only a runaway-loop stop. */
+const CHAT_LIMIT = 20;
 
 /**
  * Resolved per server rather than once at module load. That is not only for tests: an embedder
@@ -84,7 +88,12 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
   const broadcastSync = (room: Room): void => {
     for (const holder of room.seats) {
       for (const conn of holder.sockets) {
-        conn.send({ t: 'sync', snapshot: room.snapshot(holder.seat), log: room.redactedLog(holder.seat) });
+        conn.send({
+          t: 'sync',
+          snapshot: room.snapshot(holder.seat),
+          log: room.redactedLog(holder.seat),
+          chat: [...room.chat],
+        });
       }
     }
   };
@@ -194,7 +203,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
       send: (frame) => send(ws, frame as ServerFrame),
       close: (code, reason) => ws.close(code, reason),
     };
-    const state: SocketState = { conn, alive: true, room: null, seat: null, actionTimes: [] };
+    const state: SocketState = { conn, alive: true, room: null, seat: null, actionTimes: [], chatTimes: [] };
     states.set(ws, state);
 
     ws.on('pong', () => {
@@ -266,6 +275,7 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
               t: 'sync',
               snapshot: state.room.snapshot(state.seat),
               log: state.room.redactedLog(state.seat),
+              chat: [...state.room.chat],
             });
             broadcastPresence(state.room);
           }
@@ -439,7 +449,32 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
             fail(ws, ErrorCodes.NOT_IN_MATCH, 'Join a match first.');
             return;
           }
-          send(ws, { t: 'sync', snapshot: room.snapshot(seat), log: room.redactedLog(seat) });
+          send(ws, { t: 'sync', snapshot: room.snapshot(seat), log: room.redactedLog(seat), chat: [...room.chat] });
+          return;
+        }
+
+        case 'chat': {
+          const { room, seat } = state;
+          if (!room || seat === null) {
+            fail(ws, ErrorCodes.NOT_IN_MATCH, 'Join a match first.');
+            return;
+          }
+
+          const now = Date.now();
+          state.chatTimes = state.chatTimes.filter((t) => now - t < ACTION_WINDOW_MS);
+          if (state.chatTimes.length >= CHAT_LIMIT) {
+            fail(ws, ErrorCodes.RATE_LIMITED, `More than ${CHAT_LIMIT} messages in one second.`);
+            return;
+          }
+          state.chatTimes.push(now);
+
+          const message = room.say(seat, frame.text, now);
+          // Nothing but whitespace: no reason to bother the other player with it.
+          if (!message) return;
+          for (const holder of room.seats) {
+            for (const conn of holder.sockets) conn.send({ t: 'chat', message });
+          }
+          savePoint(room);
           return;
         }
 

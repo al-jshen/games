@@ -233,10 +233,13 @@ export function createRequestHandler(deps: HttpDeps) {
           json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: 'No finished match with that code' });
           return;
         }
-        // The seed is what makes a replay reproducible, and a finished match has nothing left to
-        // protect. Seat identities are a different matter: they are what session tokens are checked
-        // against, so they stay server-side.
-        const { players: _players, ...shareable } = record;
+        /*
+         * The seed is what makes a replay reproducible, and a finished match has nothing left to
+         * protect. Two fields are different in kind and stay behind: seat identities, because they
+         * are what session tokens are checked against, and the chat, because two people talking to
+         * each other did not agree to publish it to anyone holding the room code.
+         */
+        const { players: _players, chat: _chat, ...shareable } = record;
         json(res, 200, shareable);
         return;
       }

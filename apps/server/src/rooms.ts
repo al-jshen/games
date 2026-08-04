@@ -5,6 +5,7 @@ import {
   step,
   undoLast,
   type AnyGameModule,
+  type ChatMessage,
   type Effect,
   type LiveMatch,
   type MatchRecord,
@@ -38,6 +39,13 @@ const DEDUPE_LIMIT = 64;
  * short enough that a proposal left hanging by a closed tab does not block the next one for ever.
  */
 const UNDO_PROPOSAL_TTL_MS = 3 * 60 * 1000;
+/**
+ * Chat lines kept per match. The record is rewritten whole after every move, so an unbounded
+ * conversation would make every one of those writes bigger for ever.
+ */
+const CHAT_HISTORY = 200;
+/** Longest single message. Also enforced by the wire schema; this is the belt to that's braces. */
+const CHAT_MAX_LENGTH = 500;
 
 export interface Connection {
   send(frame: unknown): void;
@@ -92,6 +100,8 @@ export class Room {
   status: RoomStatus = 'lobby';
   /** Set while an undo is waiting on the other player. At most one at a time. */
   pendingUndo: PendingUndo | null = null;
+  /** Highest chat id handed out so far. Restored from the record on resume, never reused. */
+  private chatSeq = 0;
   lastActivity = Date.now();
   createdAt = Date.now();
   /** True for a room rebuilt from disk rather than started here. Informational; used in logs. */
@@ -156,9 +166,17 @@ export class Room {
       });
     }
 
+    // Carry on numbering from where the stored conversation left off, so ids stay unique across a
+    // restart and a client cannot mistake a new line for one it already has.
+    room.chatSeq = record.chat?.reduce((top, m) => Math.max(top, m.id), 0) ?? 0;
+
     const outcome = mod.outcome(state) as Outcome;
     room.status = outcome.status === 'over' ? 'finished' : room.full ? 'active' : 'lobby';
     return room;
+  }
+
+  get chat(): readonly ChatMessage[] {
+    return this.match.record.chat ?? [];
   }
 
   get full(): boolean {
@@ -374,6 +392,30 @@ export class Room {
 
   cancelUndo(): void {
     this.pendingUndo = null;
+  }
+
+  /**
+   * Record something a player said, and hand back the line to broadcast.
+   *
+   * Whitespace is collapsed rather than preserved: the input is a single line, and letting a message
+   * carry newlines or a run of hard spaces is a cheap way to take over the other player's panel.
+   */
+  say(seat: Seat, text: string, now = Date.now()): ChatMessage | null {
+    const cleaned = text.replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LENGTH);
+    if (cleaned.length === 0) return null;
+
+    const message: ChatMessage = {
+      id: (this.chatSeq += 1),
+      seat,
+      name: this.seatAt(seat)?.name ?? `Player ${seat + 1}`,
+      at: now,
+      text: cleaned,
+    };
+    const kept = [...this.chat, message].slice(-CHAT_HISTORY);
+    // Replaces the record rather than mutating it, matching how `step` and `syncPlayers` treat it.
+    this.match = { ...this.match, record: { ...this.match.record, chat: kept } };
+    this.lastActivity = now;
+    return message;
   }
 
   /**

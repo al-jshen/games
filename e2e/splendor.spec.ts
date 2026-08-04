@@ -317,6 +317,57 @@ test.describe('reserved cards', () => {
   });
 });
 
+test.describe('chat', () => {
+  test('carries messages between the two browsers and survives a reload', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    await host.getByLabel('Chat message').fill('good luck');
+    await host.getByRole('button', { name: 'Send' }).click();
+
+    // The sender sees their own line as "You"; the other sees who said it.
+    await expect(host.locator('.chat-list li', { hasText: 'good luck' })).toContainText('You');
+    await expect(guest.locator('.chat-list li', { hasText: 'good luck' })).toContainText('Ann');
+    // The input clears, so the next message does not start with the last one still in it.
+    await expect(host.getByLabel('Chat message')).toHaveValue('');
+
+    await guest.getByLabel('Chat message').fill('you too');
+    await guest.getByRole('button', { name: 'Send' }).press('Enter');
+    await expect(host.locator('.chat-list li')).toHaveCount(2);
+
+    // A reload has no history in memory, so it has to come back from the server.
+    await host.reload();
+    await expect(host.getByText('Connected')).toBeVisible();
+    await expect(host.locator('.code-display')).toHaveText(code);
+    await expect(host.locator('.chat-list li')).toHaveCount(2);
+    await expect(host.locator('.chat-list')).toContainText('good luck');
+    await expect(host.locator('.chat-list')).toContainText('you too');
+    expect(problemsOf(guest)).toEqual([]);
+
+    await host.close();
+    await guest.close();
+  });
+
+  test('will not send an empty message', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+
+    await expect(host.getByRole('button', { name: 'Send' })).toBeDisabled();
+    await host.getByLabel('Chat message').fill('   ');
+    await expect(host.getByRole('button', { name: 'Send' })).toBeDisabled();
+    await host.getByLabel('Chat message').fill('ok');
+    await expect(host.getByRole('button', { name: 'Send' })).toBeEnabled();
+
+    await host.close();
+    await guest.close();
+  });
+});
+
 test.describe('undo by agreement', () => {
   test('asks both players, and rewinds both boards when the other agrees', async ({ browser }) => {
     const host = await openPlayer(browser, 'Ann');
@@ -728,6 +779,20 @@ test.describe('the board fits without scrolling', () => {
       const SLACK = 2;
       for (const page of [host!, guest!]) {
         expect(await overflow(page), 'fresh board overflows').toBeLessThanOrEqual(SLACK);
+      }
+
+      /*
+       * The sidebar is a separate budget from the board, and its failure mode is quieter: `.app` is
+       * `overflow: hidden`, so a sidebar that outgrows its column is clipped without the document
+       * ever gaining a scrollbar. Checking document overflow alone would not notice. So check the
+       * thing that actually matters — that the last panel in the column is reachable.
+       */
+      for (const page of [host!, guest!]) {
+        await page.evaluate(() => {
+          const side = document.querySelector('.sidebar');
+          if (side) side.scrollTop = side.scrollHeight;
+        });
+        await expect(page.getByLabel('Chat message'), 'chat is unreachable in the sidebar').toBeInViewport();
       }
 
       const active = (await host!.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host! : guest!;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
 import { fullMoveTime, isRealTimestamp, moveTimeLabel } from './time.js';
 import { client, useMatch } from './store.js';
@@ -84,6 +84,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
         )}
 
         <MoveLog describe={board?.describeEffect} />
+        <ChatPanel />
       </aside>
 
       <section className="board-area">
@@ -198,6 +199,66 @@ function MoveTime({ at }: { at: number }) {
     <time className="log-at" dateTime={new Date(at).toISOString()} title={fullMoveTime(at)}>
       {moveTimeLabel(at)}
     </time>
+  );
+}
+
+/**
+ * Table talk.
+ *
+ * Deliberately plain: a bounded scrolling list and one line of input. It sits in the sidebar's fixed
+ * furniture rather than growing with its contents, because the turn guide above it takes the spare
+ * height and a panel that grew as people talked would resize the board mid-game.
+ */
+function ChatPanel() {
+  const match = useMatch();
+  const [draft, setDraft] = useState('');
+  const listRef = useRef<HTMLOListElement>(null);
+  const seated = match.seat !== null;
+
+  // Follow the conversation as it arrives. Only on a new message, so it does not fight a player who
+  // has scrolled up to re-read something.
+  useEffect(() => {
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [match.chat.length]);
+
+  const send = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    client.say(draft);
+    setDraft('');
+  };
+
+  return (
+    <section className="panel compact chat">
+      <h3>Chat</h3>
+      <ol className="chat-list" ref={listRef}>
+        {match.chat.length === 0 && <li className="muted">Say hello.</li>}
+        {match.chat.map((message) => (
+          <li key={message.id}>
+            <span className={`dot seat-${message.seat}`} />
+            <span className="chat-who">{message.seat === match.seat ? 'You' : message.name}</span>
+            <span className="chat-text">{message.text}</span>
+            <time className="chat-at" dateTime={new Date(message.at).toISOString()} title={fullMoveTime(message.at)}>
+              {moveTimeLabel(message.at, undefined, false)}
+            </time>
+          </li>
+        ))}
+      </ol>
+      <form className="chat-form" onSubmit={send}>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value.slice(0, 500))}
+          placeholder={seated ? 'Message' : 'Join a match to chat'}
+          aria-label="Chat message"
+          disabled={!seated}
+          autoComplete="off"
+        />
+        <button type="submit" className="mini" disabled={!seated || draft.trim().length === 0}>
+          Send
+        </button>
+      </form>
+    </section>
   );
 }
 

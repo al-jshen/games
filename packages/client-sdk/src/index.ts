@@ -3,6 +3,7 @@ import {
   normalizeCode,
   parseServerFrame,
   type ClientFrame,
+  type ChatMessage,
   type LogEntry,
   type PlayerInfo,
   type ServerFrame,
@@ -54,6 +55,8 @@ export interface MatchState {
   undo: PendingUndoState | null;
   /** How the last undo ended, for a one-line note after the dialog closes. */
   lastUndo: { accepted: boolean; by?: number; reason?: string } | null;
+  /** Table talk, oldest first. */
+  chat: ChatMessage[];
 }
 
 export interface PendingUndoState {
@@ -126,6 +129,7 @@ export class GameClient {
     log: [],
     undo: null,
     lastUndo: null,
+    chat: [],
     error: null,
     pending: false,
     legal: null,
@@ -263,7 +267,13 @@ export class GameClient {
       case 'sync': {
         // Authoritative reset: drop any local prediction rather than trying to rebase it.
         this.pendingAction = null;
-        this.adoptSnapshot(frame.snapshot, { log: frame.log, pending: false });
+        this.adoptSnapshot(frame.snapshot, {
+          log: frame.log,
+          pending: false,
+          // A sync carries the whole conversation, so it replaces rather than merges. An older
+          // server that sends none leaves what we have alone rather than wiping it.
+          ...(frame.chat ? { chat: frame.chat } : {}),
+        });
         return;
       }
 
@@ -325,6 +335,13 @@ export class GameClient {
           },
         });
         return;
+
+      case 'chat': {
+        // Ignore a line we already have: a reconnect can deliver a sync and a broadcast that overlap.
+        if (this.state.chat.some((m) => m.id === frame.message.id)) return;
+        this.patch({ chat: [...this.state.chat, frame.message] });
+        return;
+      }
 
       case 'presence':
         this.patch({ players: frame.players });
@@ -407,6 +424,13 @@ export class GameClient {
     this.send({ t: 'legalActions' });
   }
 
+  /** Say something to the other player. Empty or whitespace-only messages are dropped server-side. */
+  say(text: string): void {
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return;
+    this.send({ t: 'chat', text: trimmed.slice(0, 500) });
+  }
+
   /** Propose taking the last move back. Does nothing until the other player agrees. */
   requestUndo(): void {
     this.send({ t: 'undoRequest' });
@@ -442,4 +466,4 @@ export class GameClient {
 }
 
 export { PROTOCOL_VERSION, normalizeCode };
-export type { Snapshot, PlayerInfo, LogEntry };
+export type { Snapshot, PlayerInfo, LogEntry, ChatMessage };

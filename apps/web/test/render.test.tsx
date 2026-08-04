@@ -247,6 +247,12 @@ describe('move timestamps', () => {
     expect(label).toMatch(/\b\d{1,2}:07:42\b/);
   });
 
+  it('leaves seconds off a chat line, where the column is narrow and order is obvious', () => {
+    const label = moveTimeLabel(at, new Date(2026, 7, 2, 18, 0, 0), false);
+    expect(label).toMatch(/\b\d{1,2}:07\b/);
+    expect(label).not.toMatch(/:42/);
+  });
+
   it('shows the date instead once the move is not from today', () => {
     const label = moveTimeLabel(at, new Date(2026, 7, 9, 10, 0, 0));
     expect(label).not.toMatch(/:\d{2}/);
