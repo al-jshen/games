@@ -424,6 +424,11 @@
   font-size: 12.5px;
   color: var(--muted);
 }
+/* Standing advice rather than one of the options, so it scrolls with them but takes no bullet. */
+.sd-guide li.sd-guide-note {
+  list-style: none;
+  margin-left: -18px;
+}
 .sd-guide ul {
   margin: 4px 0 0;
   padding-left: 18px;
@@ -694,7 +699,7 @@
 }
 
 /* Below this the board simply cannot fit; give the page its scroll back rather than clip. */
-@media (max-height: 620px) {
+@media (max-height: 550px) {
   .sd {
     height: auto;
     overflow: visible;
@@ -794,7 +799,12 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 0;
+  /*
+   * Reserves what the guide's own floor needs. Without this the wrapper could be squeezed below it,
+   * and the guide would spill over the move log beneath rather than the column simply running out
+   * of room -- overlapping panels being much harder to notice than a scrollbar.
+   */
+  min-height: 72px;
   /* Take the sidebar's spare height, so the guide gets as much of it as possible. */
   flex: 1 1 auto;
 }
@@ -806,7 +816,13 @@
   height: auto;
   max-height: none;
   flex: 1 1 auto;
-  min-height: 190px;
+  /*
+   * Low on purpose. The guide is the panel that yields, because its list already scrolls and marks
+   * that it is scrolling; the move log and the chat below it do not degrade nearly as gracefully,
+   * and a chat box you cannot see is not a chat box. On a tall window the guide still gets all the
+   * spare height -- this floor only bites when there is not enough to go round.
+   */
+  min-height: 72px;
 }
 .sd-sidebar .sd-guide ul {
   grid-template-columns: 1fr;

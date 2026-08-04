@@ -748,6 +748,9 @@ test.describe('the board fits without scrolling', () => {
    * with the full guide showing, a card panel open, and a pending decision.
    */
   for (const viewport of [
+    // A laptop with a dock, a menu bar and a bookmarks bar leaves far less height than the screen
+    // suggests, and that is the case the sidebar ran out of room in.
+    { width: 1366, height: 620 },
     { width: 1152, height: 720 },
     { width: 1280, height: 800 },
     { width: 1440, height: 900 },
@@ -784,15 +787,16 @@ test.describe('the board fits without scrolling', () => {
       /*
        * The sidebar is a separate budget from the board, and its failure mode is quieter: `.app` is
        * `overflow: hidden`, so a sidebar that outgrows its column is clipped without the document
-       * ever gaining a scrollbar. Checking document overflow alone would not notice. So check the
-       * thing that actually matters — that the last panel in the column is reachable.
+       * ever gaining a scrollbar. Checking document overflow alone would not notice.
+       *
+       * Deliberately asserted *without* scrolling anything first. An earlier version of this scrolled
+       * the sidebar to the bottom and then checked the chat was in view, which proved only that it
+       * could be reached — and passed while the chat sat below the fold on a short window, which is
+       * exactly the complaint this now guards against.
        */
       for (const page of [host!, guest!]) {
-        await page.evaluate(() => {
-          const side = document.querySelector('.sidebar');
-          if (side) side.scrollTop = side.scrollHeight;
-        });
-        await expect(page.getByLabel('Chat message'), 'chat is unreachable in the sidebar').toBeInViewport();
+        await expect(page.getByLabel('Chat message'), 'the chat box is off screen').toBeInViewport();
+        await expect(page.locator('.log'), 'the move log is off screen').toBeInViewport();
       }
 
       const active = (await host!.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host! : guest!;
@@ -908,10 +912,17 @@ test.describe('the board fits without scrolling', () => {
        * once had `overflow-y: auto` on a list whose height nothing constrained, so the property did
        * nothing and the parent's `overflow: hidden` simply cut the text off — advice a new player
        * could not read and could not reach.
+       *
+       * What is checked is that the *end of the content* can be reached, not that the last bullet
+       * fits whole. The guide is now the panel that yields height to the move log and the chat, so
+       * on a short window a single wordy bullet can be taller than the box — you scroll through it,
+       * which is fine. Requiring it to fit entirely was a proxy for readability that stopped being
+       * true once the guide was allowed to get small, and it would fail on windows where nothing is
+       * actually wrong.
        */
       const guide = await host!.evaluate(() => {
         const list = document.querySelector('.sd-guide ul') as HTMLElement | null;
-        if (!list) return { present: false, reachable: true, viewport: 0 };
+        if (!list) return { present: false, reachable: true, viewport: 0, hidden: 0 };
         const items = [...list.querySelectorAll('li')];
         list.scrollTop = list.scrollHeight;
         const last = items[items.length - 1]?.getBoundingClientRect();
@@ -919,14 +930,16 @@ test.describe('the board fits without scrolling', () => {
         return {
           present: true,
           viewport: Math.round(list.clientHeight),
-          // After scrolling to the bottom, the final bullet must actually be inside the viewport.
-          reachable: !last || (last.top >= box.top - 2 && last.bottom <= box.bottom + 2),
+          hidden: Math.round(list.scrollHeight - list.clientHeight),
+          // Scrolled to the end, the bottom of the final bullet has to be on screen. If the list
+          // were clipped rather than scrollable this stays below the fold no matter what.
+          reachable: !last || last.bottom <= box.bottom + 2,
         };
       });
       if (guide.present) {
-        expect(guide.reachable, 'the last line of the turn guide cannot be scrolled into view').toBe(true);
-        // A viewport shorter than a line of text is scrollable in theory and unusable in practice.
-        expect(guide.viewport, 'the turn guide is too short to read').toBeGreaterThan(60);
+        expect(guide.reachable, 'the end of the turn guide cannot be scrolled to').toBe(true);
+        // Still has to be worth calling a panel: a box shorter than a line of text is not.
+        expect(guide.viewport, 'the turn guide is too short to read').toBeGreaterThan(24);
       }
 
       await host!.close();

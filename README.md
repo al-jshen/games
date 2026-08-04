@@ -169,6 +169,12 @@ The board includes a turn guide that lists what you can do right now — derived
 legal-move list that drives the clickable affordances, so it cannot describe a move the server would
 refuse — plus a rules cheatsheet, which opens automatically the first time you play.
 
+**The sidebar fits one screen too.** The turn guide is the panel that yields: it has a low floor and
+its list scrolls, because the move log and the chat below it degrade far less gracefully and a chat
+box you cannot see is not a chat box. The board-fit tests assert the log and the chat are on screen
+*without scrolling anything first*, at window heights down to 620px — a laptop with a dock, a menu
+bar and a bookmarks bar has far less height than its screen suggests.
+
 **The whole match view fits one screen.** Card and board sizes are measured from the space actually
 available rather than clamped to viewport height, so they use spare width too — cards run 86–151px and
 the token board 260–530px depending on the window. Since there is no artwork to leave room for, the

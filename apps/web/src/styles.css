@@ -381,7 +381,7 @@ input:focus {
 .log {
   display: flex;
   flex-direction: column;
-  height: clamp(104px, 17vh, 180px);
+  height: clamp(88px, 18vh, 200px);
   flex: 0 0 auto;
 }
 .log ol {
@@ -415,7 +415,7 @@ input:focus {
 .chat {
   display: flex;
   flex-direction: column;
-  height: clamp(96px, 15vh, 168px);
+  height: clamp(84px, 17vh, 190px);
   flex: 0 0 auto;
 }
 .chat-list {
@@ -545,7 +545,7 @@ input:focus {
 }
 
 /* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
-@media (max-height: 620px) {
+@media (max-height: 550px) {
   .app {
     height: auto;
     min-height: 100dvh;

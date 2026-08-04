@@ -210,15 +210,7 @@ export function TurnGuide({
           Rules &amp; help
         </button>
       </header>
-      {myTurn && (
-        <>
-          <p className="sd-guide-note">
-            Pick <em>one</em> of the first three. Scrolls and replenishing are optional extras you may
-            do first, in that order.
-          </p>
-          <ScrollableList suggestions={suggestions} />
-        </>
-      )}
+      {myTurn && <ScrollableList suggestions={suggestions} />}
     </div>
   );
 }
@@ -245,9 +237,18 @@ function ScrollableList({ suggestions }: { suggestions: Suggestion[] }) {
     return () => observer.disconnect();
   }, [suggestions]);
 
+  /*
+   * The standing note scrolls with the advice rather than sitting above it. It is a fixed 45px, and
+   * together with the header that was 106px of chrome before a single bullet — on a short window the
+   * list was left with three pixels and the guide became a heading with nothing under it.
+   */
   return (
     <div className="sd-guide-list-wrap" data-scrollable={scrollable}>
       <ul ref={listRef}>
+        <li className="sd-guide-note">
+          Pick <em>one</em> of the first three. Scrolls and replenishing are optional extras you may
+          do first, in that order.
+        </li>
         {suggestions.map((s) => (
           <li key={s.title} className={s.urgent ? 'urgent' : ''}>
             <strong>{s.title}</strong>
