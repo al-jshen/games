@@ -143,7 +143,9 @@ after an hour with nobody connected, and rebuilt from the stored action log the 
 returns: the same board, the same hidden information, the same move log, and both people back in the
 seats they had. A server restart is the same story, provided `SESSION_SECRET` is stable.
 
-The lobby lists the games this browser holds a seat in, so you do not have to have kept the link.
+The lobby lists the games this browser holds a seat in, so you do not have to have kept the link, and
+each one can be closed from there — it asks first, since closing ends the match for your opponent
+too. The record is kept; it is the room that goes.
 Your opponent's browser holds their own token, and they can come back whenever suits them — neither
 of you has to be online at the same time to pick a game back up.
 

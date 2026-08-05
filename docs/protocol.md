@@ -298,7 +298,8 @@ Enough for `curl`, a health check, and fetching replays. Everything else is on t
 | `GET` | `/api/games` | game catalog |
 | `POST` | `/api/matches` | `{gameId, options?}` → `{code, matchId, gameId}` |
 | `GET` | `/api/matches` | recent matches, newest first (`?limit=50`). Summaries only — never a seed. |
-| `GET` | `/api/matches/:code` | public room info, for prefetching before connecting |
+| `GET` | `/api/matches/:code` | public room info, for prefetching before connecting. `410` once closed. |
+| `POST` | `/api/matches/:code/close` | `{sessionToken}` → end the match. Seat token required. |
 | `GET` | `/api/matches/:code/replay` | full record of a **finished** match |
 
 Creating over HTTP means the code exists before any socket opens, so you can make a match with
@@ -316,6 +317,26 @@ match exactly. Records are upserted into SQLite after every move, so an interrup
 retrievable and still replays. It is the bug-report format, the training corpus, and the CI regression
 input all at once. The seed is included only once a match is finished, since there is nothing left to
 protect by then.
+
+## Closing a match
+
+`POST /api/matches/:code/close` with `{"sessionToken": "..."}` ends a match for good. HTTP rather
+than a frame because the caller is a lobby that holds a seat token but has no socket to the room.
+
+The token is what authorises it — a room code alone must not be enough to end somebody else's game —
+and it must name a seat the record recognises. Anyone still connected is sent
+`error{code:"MATCH_CLOSED"}` before their socket is dropped, so the other player sees a reason rather
+than a connection that quietly stops working; SDK clients should treat that code as terminal and stop
+reconnecting.
+
+Closing ends the *room*, not the history. The record is kept and still appears in `GET /api/matches`,
+marked with `closedAt`, and it will not be rebuilt: `join` answers `NO_SUCH_MATCH` and
+`GET /api/matches/:code` answers **410 Gone** rather than 404, so a client can tell "never heard of
+it" from "existed, and is over" and drop its stored seat accordingly.
+
+It is deliberately unilateral, unlike undo. Undo changes a position both players are still competing
+over, so it needs consent; closing ends a game one of them no longer wants to play, and requiring
+the other to agree would mean an abandoned match could never be cleared.
 
 ## Resuming a match
 

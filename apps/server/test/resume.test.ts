@@ -411,6 +411,160 @@ describe('a resumed match is not an open door', () => {
   });
 });
 
+describe('closing a match', () => {
+  /** The lobby's request: a seat token, over HTTP, with no socket to the room. */
+  const close = (code: string, sessionToken?: string) =>
+    fetch(`${server.url}/api/matches/${code}/close`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(sessionToken === undefined ? {} : { sessionToken }),
+    });
+
+  it('ends the match for both players and refuses to bring it back', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'c1');
+    const hostToken = host.sessionToken!;
+    const guestToken = guest.sessionToken!;
+
+    const res = await close(code, hostToken);
+    expect(res.status).toBe(200);
+
+    /*
+     * The opponent is told why before their socket goes. Without it their client would spend the
+     * next few minutes reconnecting to a room that is never coming back, which reads as a bug
+     * rather than as something the other player chose to do.
+     */
+    const told = await guest.next('error');
+    expect(told.code).toBe('MATCH_CLOSED');
+    expect(told.message).toMatch(/closed this match/i);
+
+    // Gone from memory, and it does not come back when somebody asks for it again.
+    expect(server.rooms.size).toBe(0);
+    expect(await server.rooms.resumeByCode(code)).toBeUndefined();
+
+    const back = await TestClient.connect(wsUrl());
+    expect((await back.hello(guestToken)).resumed).toBeUndefined();
+    back.send({ t: 'join', code });
+    expect((await back.next('error')).code).toBe('NO_SUCH_MATCH');
+    back.close();
+
+    host.close();
+    guest.close();
+  });
+
+  it('keeps the history: closing ends the room, not the record', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'h1');
+    await close(code, host.sessionToken!);
+
+    const record = await store().findByCode(code);
+    expect(record?.closedAt).toBeGreaterThan(0);
+    expect(record?.actions).toHaveLength(1);
+    // Still listed among past matches, so a closed game is not erased from the server's history.
+    expect((await store().list()).some((m) => m.code === code)).toBe(true);
+
+    host.close();
+    guest.close();
+  });
+
+  it('tells a lobby the difference between never-heard-of and closed', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'g1');
+    await close(code, host.sessionToken!);
+
+    // 410 rather than 404, so a client can drop the entry knowing it existed and is over.
+    const info = await fetch(`${server.url}/api/matches/${code}`);
+    expect(info.status).toBe(410);
+    expect(((await info.json()) as { code: string }).code).toBe('MATCH_CLOSED');
+
+    expect((await fetch(`${server.url}/api/matches/ZZZZZZ`)).status).toBe(404);
+
+    host.close();
+    guest.close();
+  });
+
+  it('needs a seat token, not just the code', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'a1');
+
+    // Somebody who merely knows the code must not be able to end the game.
+    expect((await close(code)).status).toBe(401);
+    expect((await close(code, 'not-a-real-token')).status).toBe(401);
+
+    // Nor a valid token for a different match.
+    const other = await seatedPair();
+    expect((await close(code, other.host.sessionToken!)).status).toBe(403);
+
+    // ...and it really is still playable.
+    expect((await server.rooms.resumeByCode(code))?.code).toBe(code);
+    await playOne([host, guest], 'a2');
+
+    host.close();
+    guest.close();
+    other.host.close();
+    other.guest.close();
+  });
+
+  it('refuses a token whose seat the record does not recognise', async () => {
+    /*
+     * Defence in depth, and the one path the checks above do not reach: a correctly signed token,
+     * for the right match, naming a seat holder the record has never heard of. Stands in for a
+     * record that has been altered, or a token that outlived the seating it was issued against.
+     */
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'seat1');
+    const token = host.sessionToken!;
+
+    // Evict first: sweeping persists the live room, which would write the real seating straight
+    // back over the edit below.
+    host.close();
+    guest.close();
+    await new Promise((r) => setTimeout(r, 50));
+    await evictAll();
+
+    const record = (await store().findByCode(code))!;
+    await store().save({
+      ...record,
+      players: record.players!.map((p) => (p.seat === 0 ? { ...p, playerId: 'someone-else' } : p)),
+    });
+
+    const res = await close(code, token);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe('BAD_SESSION');
+    expect((await store().findByCode(code))?.closedAt).toBeUndefined();
+  });
+
+  it('says so rather than pretending, when it is already closed', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'd1');
+    const token = host.sessionToken!;
+    expect((await close(code, token)).status).toBe(200);
+
+    const again = await close(code, token);
+    expect(again.status).toBe(403);
+    expect(((await again.json()) as { code: string }).code).toBe('MATCH_CLOSED');
+
+    host.close();
+    guest.close();
+  });
+
+  it('closes a match that is only on disk, with nobody connected', async () => {
+    const { host, guest, code } = await seatedPair();
+    await playOne([host, guest], 'e1');
+    const token = host.sessionToken!;
+    host.close();
+    guest.close();
+    await new Promise((r) => setTimeout(r, 50));
+    await evictAll();
+    expect(server.rooms.size).toBe(0);
+
+    // The common case from the lobby: the room left memory days ago.
+    expect((await close(code, token)).status).toBe(200);
+    expect((await store().findByCode(code))?.closedAt).toBeGreaterThan(0);
+    expect(await server.rooms.resumeByCode(code)).toBeUndefined();
+  });
+});
+
 describe('what the match endpoints will tell you', () => {
   it('never serves the seed of a match still being played', async () => {
     const { host, guest, code } = await seatedPair('splendor-duel');

@@ -551,6 +551,12 @@ export class RoomRegistry {
       const resident = this.byMatchId.get(record.matchId);
       if (resident) return resident;
 
+      if (record.closedAt !== undefined) {
+        // Somebody called this match off. The record stays for history, but the room does not come
+        // back -- otherwise closing it would only last until the next person opened the link.
+        return undefined;
+      }
+
       const mod = getGame(record.gameId);
       if (!mod) {
         this.log?.(`cannot resume match ${record.code}: no game module "${record.gameId}" is registered`);
@@ -611,6 +617,70 @@ export class RoomRegistry {
       }
     }
     return saved;
+  }
+
+  /**
+   * Call a match off at a player's request.
+   *
+   * Takes a verified session claim rather than a seat number: the caller is a lobby that is not
+   * connected to this room, so the token is the only thing that says they were ever in it. Anything
+   * less and a room code would be enough to end someone else's game.
+   *
+   * The record is marked and kept. Closing ends the room, not the history.
+   */
+  async closeMatch(
+    code: string,
+    claim: SessionClaim,
+    now = Date.now(),
+  ): Promise<{ ok: true; room: Room | null; record: MatchRecord } | { ok: false; code: string; message: string }> {
+    const resident = this.byCode.get(code);
+    const record = resident?.match.record ?? (await this.store.findByCode(code));
+    if (!record) {
+      return { ok: false, code: ErrorCodes.NO_SUCH_MATCH, message: `No match with code ${code}` };
+    }
+    if (record.closedAt !== undefined) {
+      return { ok: false, code: ErrorCodes.MATCH_CLOSED, message: 'That match is already closed.' };
+    }
+    if (claim.matchId !== record.matchId) {
+      return { ok: false, code: ErrorCodes.BAD_SESSION, message: 'That session is for a different match.' };
+    }
+    // The seat has to be one this server actually issued for this match. Records written before
+    // seats were durable have no list to check against, and the signature is the proof there.
+    const seated = record.players?.length
+      ? record.players.some((p) => p.seat === claim.seat && p.playerId === claim.playerId)
+      : record.seats.includes(claim.seat as Seat);
+    if (!seated) {
+      return { ok: false, code: ErrorCodes.BAD_SESSION, message: 'You do not hold a seat in that match.' };
+    }
+
+    const closed: MatchRecord = { ...record, closedAt: now };
+    if (resident) {
+      resident.match = { ...resident.match, record: closed };
+      resident.pendingUndo = null;
+    }
+    await this.store.save(closed);
+
+    if (resident) {
+      /*
+       * Say why before dropping the sockets. Without this the other player's game simply stops and
+       * their client spends the next few minutes trying to reconnect to a room that will never come
+       * back, which looks like a bug rather than a decision somebody made.
+       */
+      const by = record.players?.find((p) => p.seat === claim.seat)?.name ?? 'The other player';
+      for (const holder of resident.seats) {
+        for (const conn of holder.sockets) {
+          conn.send({
+            t: 'error',
+            code: ErrorCodes.MATCH_CLOSED,
+            message: `${by} closed this match.`,
+          });
+        }
+      }
+      resident.dispose();
+      this.byCode.delete(resident.code);
+      this.byMatchId.delete(resident.matchId);
+    }
+    return { ok: true, room: resident ?? null, record: closed };
   }
 
   async sweep(now = Date.now()): Promise<number> {

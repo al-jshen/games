@@ -50,11 +50,54 @@ export function heldCodes(): string[] {
   return codes;
 }
 
+function tokenFor(code: string): string | null {
+  try {
+    return localStorage.getItem(`${TOKEN_PREFIX}${code}`);
+  } catch {
+    return null;
+  }
+}
+
 function forget(code: string): void {
   try {
     localStorage.removeItem(`${TOKEN_PREFIX}${code}`);
   } catch {
     // Nothing to do; the entry is unreadable anyway.
+  }
+}
+
+/**
+ * Close a match for good, at the server, then forget the seat locally.
+ *
+ * Not a local hide: the other player's copy would carry on existing and the game would still be
+ * sitting there the next time either of them opened the link. The seat token is what authorises it,
+ * so a code alone cannot end somebody else's game.
+ *
+ * The local token is dropped whichever way the request goes. If the server has never heard of the
+ * match, or says it is already closed, the entry is stale and hiding it is exactly right.
+ */
+export async function closeMatch(code: string): Promise<{ ok: boolean; message?: string }> {
+  const sessionToken = tokenFor(code);
+  if (!sessionToken) {
+    forget(code);
+    return { ok: true };
+  }
+  try {
+    const res = await fetch(`/api/matches/${code}/close`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionToken }),
+    });
+    if (res.ok || res.status === 404 || res.status === 410) {
+      forget(code);
+      return { ok: true };
+    }
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    // Left in the list on purpose: it still exists, and pretending otherwise would be a lie the
+    // player discovers later.
+    return { ok: false, message: body.message ?? `The server refused (${res.status}).` };
+  } catch {
+    return { ok: false, message: 'Could not reach the server.' };
   }
 }
 
@@ -72,7 +115,9 @@ export async function listResumable(): Promise<ResumableMatch[]> {
         // Offline or the server is down: keep the token, this says nothing about the match.
         return null;
       }
-      if (res.status === 404) {
+      // 404: never existed. 410: existed and was closed by somebody. Either way this browser is
+      // holding a seat in a game it can no longer join, so drop it.
+      if (res.status === 404 || res.status === 410) {
         forget(code);
         return null;
       }

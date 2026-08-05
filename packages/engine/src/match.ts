@@ -21,6 +21,14 @@ export interface MatchRecord {
   finishedAt?: number;
   outcome?: Outcome;
   /**
+   * Set when a player closed the match rather than playing it out. Distinct from `finishedAt`: the
+   * game did not end, it was called off, and the rules have nothing to say about it — which is why
+   * this is a field on the envelope rather than an `Outcome` the module would have to invent.
+   *
+   * The record is kept. Closing ends the room, not the history.
+   */
+  closedAt?: number;
+  /**
    * Who was sitting in each seat. Optional because a record written before seats were durable will
    * not have it, and those matches still have to replay.
    *

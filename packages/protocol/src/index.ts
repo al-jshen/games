@@ -26,6 +26,8 @@ export const ErrorCodes = {
   NO_SUCH_MATCH: 'NO_SUCH_MATCH',
   MATCH_FULL: 'MATCH_FULL',
   MATCH_OVER: 'MATCH_OVER',
+  /** A player closed the match. It is gone for both of them, and cannot be resumed. */
+  MATCH_CLOSED: 'MATCH_CLOSED',
   UNKNOWN_GAME: 'UNKNOWN_GAME',
   BAD_SESSION: 'BAD_SESSION',
   /** `expectVersion` did not match; the attached snapshot is the truth. */

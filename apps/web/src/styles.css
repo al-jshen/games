@@ -224,6 +224,22 @@ input:focus {
   flex-direction: column;
   gap: 8px;
 }
+.resume-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.resume-row .resume-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.resume-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .resume-item {
   display: flex;
   align-items: baseline;

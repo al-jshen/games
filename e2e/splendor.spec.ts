@@ -317,6 +317,53 @@ test.describe('reserved cards', () => {
   });
 });
 
+test.describe('closing a game from the lobby', () => {
+  test('asks first, then ends it for both players and drops it from the list', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    // Play a move, so this is a real game in progress rather than an empty room.
+    const mover = (await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host : guest;
+    await mover.locator('.token-board .cell-selectable').first().click();
+    await mover.getByRole('button', { name: /^Take/ }).click();
+    await expect(mover.locator('.log li')).toHaveCount(1);
+
+    // Back to the lobby in a new tab of the same browser: the seat token is what puts it in the list.
+    const lobby = await host.context().newPage();
+    await lobby.goto('/');
+    await expect(lobby.getByText('Connected')).toBeVisible();
+    const row = lobby.locator('.resume-row', { hasText: code });
+    await expect(row).toBeVisible();
+
+    // It asks before doing anything, because this ends the game for the opponent too.
+    await row.getByRole('button', { name: /^Close the/ }).click();
+    await expect(row).toContainText('Close for both players?');
+    await row.getByRole('button', { name: 'Keep' }).click();
+    await expect(row).toBeVisible();
+    await expect(row).not.toContainText('Close for both players?');
+
+    await row.getByRole('button', { name: /^Close the/ }).click();
+    await row.getByRole('button', { name: 'Close it' }).click();
+
+    // Gone from the list...
+    await expect(lobby.locator('.resume-row', { hasText: code })).toHaveCount(0);
+    // ...and the opponent is told why rather than left watching a dead connection.
+    await expect(guest.locator('.banner.error')).toContainText('closed this match');
+
+    // Reopening the link does not bring it back.
+    await lobby.goto(`/g/${code}`);
+    await expect(lobby.getByText('Connected')).toBeVisible();
+    await expect(lobby.locator('.error')).toContainText(/no match/i);
+    await expect(lobby.locator('.sd')).toHaveCount(0);
+
+    await host.close();
+    await guest.close();
+  });
+});
+
 test.describe('chat', () => {
   test('carries messages between the two browsers and survives a reload', async ({ browser }) => {
     const host = await openPlayer(browser, 'Ann');

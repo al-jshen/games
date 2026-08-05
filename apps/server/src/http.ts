@@ -6,6 +6,7 @@ import type { MatchRecord } from '@games/engine';
 import { ErrorCodes, normalizeCode } from '@games/protocol';
 import { gameCatalog } from './registry.js';
 import type { RoomRegistry } from './rooms.js';
+import { verifyToken } from './sessions.js';
 import type { ReplayStore } from './replay-store.js';
 
 /**
@@ -38,6 +39,8 @@ export interface HttpDeps {
   store: ReplayStore;
   /** Absolute path to the built web app, or `null` to serve API only. */
   webRoot: string | null;
+  /** Signs session tokens. Closing a match is authenticated with one. */
+  secret: string;
 }
 
 /** A match is over when its record says so; a resident room may or may not exist either way. */
@@ -171,6 +174,39 @@ export function createRequestHandler(deps: HttpDeps) {
         return;
       }
 
+      /*
+       * Called from the lobby, which holds a seat token but no socket to the room, so this is HTTP
+       * rather than a frame. The token is what authorises it: a room code alone must not be enough
+       * to end somebody else's game.
+       */
+      const closeMatch = /^\/api\/matches\/([^/]+)\/close$/.exec(path);
+      if (closeMatch && req.method === 'POST') {
+        const code = normalizeCode(closeMatch[1] ?? '');
+        let body: { sessionToken?: string };
+        try {
+          body = (await readJsonBody(req)) as { sessionToken?: string };
+        } catch (err) {
+          json(res, 400, { code: ErrorCodes.BAD_FRAME, message: (err as Error).message });
+          return;
+        }
+        const claim = body.sessionToken ? verifyToken(deps.secret, body.sessionToken) : null;
+        if (!claim) {
+          json(res, 401, { code: ErrorCodes.BAD_SESSION, message: 'A valid session token is required.' });
+          return;
+        }
+
+        const result = await deps.rooms.closeMatch(code, claim);
+        if (!result.ok) {
+          json(res, result.code === ErrorCodes.NO_SUCH_MATCH ? 404 : 403, {
+            code: result.code,
+            message: result.message,
+          });
+          return;
+        }
+        json(res, 200, { code, closed: true });
+        return;
+      }
+
       const matchInfo = /^\/api\/matches\/([^/]+)$/.exec(path);
       if (matchInfo && req.method === 'GET') {
         const code = normalizeCode(matchInfo[1] ?? '');
@@ -198,6 +234,12 @@ export function createRequestHandler(deps: HttpDeps) {
         const record = await deps.store.findByCode(code);
         if (!record) {
           json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: `No match with code ${code}` });
+          return;
+        }
+        if (record.closedAt !== undefined) {
+          // Gone rather than missing: it existed, a player called it off, and it will not be back.
+          // Distinct from 404 so a client can tell "never heard of it" from "over, forget it".
+          json(res, 410, { code: ErrorCodes.MATCH_CLOSED, message: 'That match was closed.' });
           return;
         }
         json(res, 200, {

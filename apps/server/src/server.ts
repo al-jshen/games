@@ -53,7 +53,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const log = options.quiet ? () => undefined : (msg: string) => console.log(msg);
   const rooms = new RoomRegistry(store, log);
 
-  const handler = createRequestHandler({ rooms, store, webRoot: options.webRoot ?? null });
+  const handler = createRequestHandler({ rooms, store, secret, webRoot: options.webRoot ?? null });
   const http = createServer((req, res) => {
     void handler(req, res);
   });

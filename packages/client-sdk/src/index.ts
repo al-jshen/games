@@ -1,4 +1,5 @@
 import {
+  ErrorCodes,
   PROTOCOL_VERSION,
   normalizeCode,
   parseServerFrame,
@@ -170,6 +171,16 @@ export class GameClient {
       this.storage?.setItem(this.tokenKey(code), token);
     } catch {
       // Private browsing or a full quota: resume is a nice-to-have, not worth failing over.
+    }
+  }
+
+  /** Drop a seat token we know is dead, so it stops showing up as a resumable game. */
+  private forgetToken(code: string | null): void {
+    if (!code) return;
+    try {
+      this.storage?.removeItem(this.tokenKey(code));
+    } catch {
+      // Unreadable storage; nothing to clean up.
     }
   }
 
@@ -352,6 +363,17 @@ export class GameClient {
         return;
 
       case 'error':
+        if (frame.code === ErrorCodes.MATCH_CLOSED) {
+          /*
+           * Terminal. The room is gone for good, so stop trying to get back into it -- otherwise the
+           * socket closing behind this frame would start a reconnect loop against a match that will
+           * never answer, and the player would sit watching "Reconnecting…" for ever.
+           */
+          this.closedByUs = true;
+          this.forgetToken(this.state.code);
+          this.patch({ error: { code: frame.code, message: frame.message }, undo: null });
+          return;
+        }
         this.patch({ error: { code: frame.code, message: frame.message } });
         return;
 
