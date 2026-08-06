@@ -36,6 +36,14 @@ export interface SearchConfig {
   shrinkage: number;
   /** Bias rollouts toward buying rather than moving uniformly at random. */
   biasedRollout: boolean;
+  /**
+   * Use the game's `sampleAction` in rollouts, where it has one, instead of enumerating.
+   *
+   * Enumerating legal moves measured at 39% of self-play, nearly all of it thrown away — a rollout
+   * wants one move, not all of them. The sampler carries its own bias, so `biasedRollout` has no
+   * effect while this is on.
+   */
+  fastRollout: boolean;
 
   /**
    * Reuse a fixed pool of sampled worlds instead of drawing a fresh one every iteration.
@@ -77,6 +85,7 @@ export const BASELINE: SearchConfig = {
   rolloutDepth: 40,
   shrinkage: 0,
   biasedRollout: false,
+  fastRollout: false,
   commonRandomNumbers: false,
   worldPool: 32,
   normaliseValues: false,
@@ -98,6 +107,7 @@ export const DEFAULT_CONFIG: SearchConfig = {
   leaf: 'mixed',
   shrinkage: 0.5,
   biasedRollout: true,
+  fastRollout: true,
   commonRandomNumbers: false,
   normaliseValues: true,
 };

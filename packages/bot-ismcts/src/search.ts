@@ -34,6 +34,14 @@ export interface SearchDeps<S, A, V, O> {
   evaluate: Evaluator<S>;
   /** Optional rollout bias. Return an index into `actions`; omit for uniform. */
   rolloutPolicy?: (state: S, seat: Seat, actions: A[], rng: RandomCursor) => number;
+  /**
+   * Optional fast path for rollouts: pick one legal action without enumerating them all.
+   *
+   * A rollout needs a single move, but `legalActions` builds every one of them and the rollout
+   * discards the rest. Where a game can propose-and-check more cheaply than it can enumerate, this
+   * is where it says so.
+   */
+  sampleAction?: (state: S, seat: Seat, rng: RandomCursor) => A | null;
 }
 
 interface Node<A> {
@@ -246,19 +254,29 @@ function rollout<S, A, V, O>(
   config: SearchConfig,
   rng: RandomCursor,
 ): number {
-  const { mod, evaluate, rolloutPolicy } = deps;
+  const { mod, evaluate, rolloutPolicy, sampleAction } = deps;
+  const fast = config.fastRollout && sampleAction ? sampleAction : null;
   let state = start;
   for (let i = 0; i < config.rolloutDepth; i++) {
     if (mod.outcome(state).status === 'over') return terminalValue(mod, state, seat);
     const actor = mod.currentActors(state)[0];
     if (actor === undefined) break;
-    const { actions } = mod.legalActions(state, actor);
-    if (actions.length === 0) break;
-    const index =
-      config.biasedRollout && rolloutPolicy
-        ? rolloutPolicy(state, actor, actions, rng)
-        : rng.int(actions.length);
-    const result = mod.apply(state, actor, actions[index] as A);
+
+    let action: A | null;
+    if (fast) {
+      action = fast(state, actor, rng);
+    } else {
+      const { actions } = mod.legalActions(state, actor);
+      if (actions.length === 0) break;
+      const index =
+        config.biasedRollout && rolloutPolicy
+          ? rolloutPolicy(state, actor, actions, rng)
+          : rng.int(actions.length);
+      action = actions[index] as A;
+    }
+    if (action === null) break;
+
+    const result = mod.apply(state, actor, action);
     if (!result.ok) break;
     state = result.state;
   }

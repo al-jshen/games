@@ -25,10 +25,49 @@ import { CROWN_THRESHOLDS, TOKEN_LIMIT } from './types.js';
 
 /**
  * Work on a deep copy so the reducer is pure and callers can safely hold onto the previous state.
- * A JSON round trip also enforces the "state must be plain JSON" invariant every time we run.
+ *
+ * Written out by hand rather than `JSON.parse(JSON.stringify(state))`. The round trip turned every
+ * number and key into text and parsed it back again, which measured 6.33µs against 0.23µs for this —
+ * 27x — and `apply` is 55% of self-play, so it was costing roughly 40% of the total. `structuredClone`
+ * is no help; it measured slower than the round trip.
+ *
+ * The round trip did double as a runtime check that the state is plain JSON. That is a good
+ * invariant in the wrong place: `isJsonRoundTrippable` already asserts it in the test suite, and
+ * paying for it on every single reduction is not how it should be enforced.
+ *
+ * Every nested container is copied. Nothing below is deeper than this: `Pending` and the ability
+ * queue entries are flat unions of primitives, and a player's only nested array is `stacks[].cardIds`.
+ * Add a nested structure to the state and it must be added here too — which is what the purity tests
+ * (deep-freeze the input, assert no mutation) exist to catch.
  */
 function draft(state: SplendorState): SplendorState {
-  return JSON.parse(JSON.stringify(state)) as SplendorState;
+  return {
+    ...state,
+    options: { ...state.options },
+    bag: state.bag.slice(),
+    board: state.board.slice(),
+    decks: { 1: state.decks[1].slice(), 2: state.decks[2].slice(), 3: state.decks[3].slice() },
+    pyramid: {
+      1: state.pyramid[1].slice(),
+      2: state.pyramid[2].slice(),
+      3: state.pyramid[3].slice(),
+    },
+    royals: state.royals.slice(),
+    players: [draftPlayer(state.players[0]), draftPlayer(state.players[1])],
+    pending: state.pending ? { ...state.pending } : null,
+    abilityQueue: state.abilityQueue.map((entry) => ({ ...entry })),
+  };
+}
+
+function draftPlayer(player: SplendorState['players'][number]): SplendorState['players'][number] {
+  return {
+    ...player,
+    tokens: { ...player.tokens },
+    reserved: player.reserved.map((held) => ({ ...held })),
+    stacks: player.stacks.map((stack) => ({ ...stack, cardIds: stack.cardIds.slice() })),
+    colorless: player.colorless.slice(),
+    royals: player.royals.slice(),
+  };
 }
 
 function other(seat: Seat): Seat {

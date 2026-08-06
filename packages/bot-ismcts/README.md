@@ -43,22 +43,52 @@ than assumed. `BASELINE` has them all off; `DEFAULT_CONFIG` has the ones I would
 
 Run `npm run selfplay` to play each of them against the same configuration with it turned off.
 
+## Speed
+
+Self-play throughput is strength: 4x the iterations measured 31-1. So the profile matters. Timing the
+engine calls directly (the `--prof` output on macOS mis-attributes almost everything to one bogus
+symbol) showed **94% of self-play in two functions** — `apply` at 55% and `legalActions` at 39%.
+
+| Change | Effect |
+| --- | --- |
+| Hand-written clone in `apply`, replacing a JSON round trip | copy 6.33µs → 0.23µs (**27x**), ~40% off total |
+| `sampleAction` fast path, replacing enumeration in rollouts | **1.8x** |
+| Worker-thread pool for self-play | **3.9x** on 9 workers |
+
+About **13x** end to end: 77ms per move down to 22ms, then divided across cores. Parallel scaling is
+sub-linear because the workload is allocation-heavy and threads contend for memory bandwidth, each
+with its own heap.
+
+Two of those needed a second look:
+
+`structuredClone` is *slower* than the JSON round trip here, which is not what you would guess. The
+hand-written copy wins because it never builds a string — no formatting every number and key into
+text and parsing it back.
+
+The sampler was initially **worse**, 8-24 at equal iterations, despite doing what looked like the
+same job as enumerate-then-choose. Measuring the two distributions showed why: it proposed purchases
+2.2% of the time against enumeration's 28.7%. Picking one random card and testing it almost always
+finds an unaffordable one, where enumeration finds every affordable card and the rollout bias then
+picks it. Scanning for affordability instead — still far cheaper than full enumeration, which also
+expands payment variants and 145 token lines — brought it to 19-13, and 23-9 at equal time.
+
 ## What the measurements said
 
-16 games per matchup at 120 iterations, seats swapped every game. At that sample only a rout is
-significant — roughly 13-3 — so treat the middle rows as unresolved rather than as results.
+32 games per matchup at 120 iterations, seats swapped every game. At that sample the significance
+threshold is about 25-7, so treat the middle rows as unresolved rather than as results. Several of
+these reversed between 16 and 32 games, which is the argument for the threshold being printed.
 
 | Matchup | Result | Read |
 | --- | --- | --- |
-| ismcts vs random | 16-0 | it plays |
-| 480 iterations vs 120 | 14-2 | **search scales**; the bottleneck is still the tree, not the evaluation |
-| tuned vs plain baseline | 14-2 | the package of extras is worth having |
-| heuristic shrinkage 0.5 | 12-4 | probably helping |
-| value rescaling | 12-4 | probably helping |
-| heuristic only, no rollout | 10-6 | unresolved, and ~7x slower per move — worth a look |
-| biased rollouts | 9-7 | no evidence either way |
-| common random numbers (pool 32) | 6-10 | **hurting** |
-| common random numbers (pool > iterations) | 10-6 | no effect |
+| ismcts vs random | 32-0 | it plays |
+| 480 iterations vs 120 | 31-1 | **search scales**; the bottleneck is still the tree, not the evaluation |
+| tuned vs plain baseline | 25-7 | the package of extras is worth having |
+| heuristic shrinkage 0.5 | 25-7 | helping |
+| fast sampler, equal *time* | 23-9 | worth its slight cost per simulation |
+| value rescaling | 22-10 | probably helping |
+| fast sampler, equal iterations | 19-13 | no longer worse, after the fix above |
+| biased rollouts | 17-15 | no evidence either way |
+| heuristic only, no rollout | 8-24 | **rollouts do matter** — this reversed at a bigger sample |
 
 Two things are worth taking from that.
 

@@ -2,22 +2,22 @@
 /**
  * Self-play for the ISMCTS bot, and the measurements that say whether any of it is working.
  *
- * Runs entirely in process against the same reducer the server runs — no sockets, no database — which
- * is the only reason this is affordable: the rules alone do about 90,000 moves/sec, so the search is
- * the whole cost.
+ * Runs entirely in process against the same reducer the server runs -- no sockets, no database.
+ * Games are distributed across worker threads, which is close to free: the engine is pure, nothing
+ * is shared, and a game is a few hundred kilobytes of state that never leaves its own thread.
  *
- * Every extra in the search is a switch, and each one is here to be measured rather than believed:
- * common random numbers, heuristic shrinkage, biased rollouts, value rescaling. The A/B mode plays
- * each of them against the baseline that has it turned off.
+ * Every extra in the search is a switch, and each one is here to be measured rather than believed.
+ * The A/B mode plays each against the same configuration with it turned off.
  *
- *   node tools/selfplay/selfplay.mjs                 # the standard battery
- *   node tools/selfplay/selfplay.mjs --games 40      # more games per matchup
- *   node tools/selfplay/selfplay.mjs --only ab       # just the toggle comparison
+ *   node tools/selfplay/selfplay.mjs                        # the standard battery
+ *   node tools/selfplay/selfplay.mjs --games 40             # more games per matchup
+ *   node tools/selfplay/selfplay.mjs --only ab              # just the toggle comparison
+ *   node tools/selfplay/selfplay.mjs --only ab --filter crn # one comparison
+ *   node tools/selfplay/selfplay.mjs --workers 1            # serial, for profiling
  */
 
-import { RandomCursor } from '@games/engine';
-import { search, measureDisagreement, BASELINE, DEFAULT_CONFIG } from '@games/bot-ismcts';
-import splendorDuel, { determinize, evaluate, redactFor, rolloutPreference } from '@games/splendor-duel';
+import { BASELINE, DEFAULT_CONFIG } from '@games/bot-ismcts';
+import { defaultWorkers, runJobs } from './pool.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -29,109 +29,49 @@ const ITERATIONS = Number(flag('iterations', '300'));
 const ONLY = flag('only', 'all');
 /** Substring filter for the A/B list, so one comparison can be re-run on its own. */
 const FILTER = flag('filter', '');
+const WORKERS = Number(flag('workers', String(defaultWorkers())));
+/** Measured speedup of the fast rollout sampler, used to make the equal-time comparison fair. */
+const FAST_SPEEDUP = Number(flag('fast-speedup', '1.8'));
 
-/** Self-play must terminate. The official rules do not guarantee it, so the house rule goes on. */
-const OPTIONS = { maxTurnsWithoutPurchase: 60 };
+const ismcts = (overrides = {}) => (seed) => ({
+  kind: 'ismcts',
+  config: { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...overrides, seed },
+});
+const baseline = (overrides = {}) => (seed) => ({
+  kind: 'ismcts',
+  config: { ...BASELINE, iterations: ITERATIONS, ...overrides, seed },
+});
+const random = () => (seed) => ({ kind: 'random', seed });
 
-const deps = {
-  mod: splendorDuel,
-  determinize,
-  evaluate: (state, seat) => evaluate(state, seat),
-  rolloutPolicy: (state, seat, actions, rng) => {
-    // Mostly buy; otherwise anything. Keeps rollouts from being pure noise without making them a
-    // fixed strategy the tree can overfit to.
-    const buys = rolloutPreference(actions);
-    if (buys.length > 0 && rng.int(4) > 0) return buys[rng.int(buys.length)];
-    return rng.int(actions.length);
-  },
-};
+async function matchup(label, makeA, makeB, games = GAMES) {
+  const jobs = Array.from({ length: games }, (_, game) => ({
+    seed: `sp-${game}`,
+    aFirst: game % 2 === 0,
+    a: makeA(`a${game}`),
+    b: makeB(`b${game}`),
+  }));
 
-/** A player: given the true state and a seat, choose an action. Only ever shown the redacted view. */
-function ismctsPlayer(config) {
-  let move = 0;
-  const stats = { disagreement: [], noiseFloor: [], valueSpan: [] };
-  return {
-    stats,
-    choose(state, seat) {
-      const view = JSON.parse(JSON.stringify(redactFor(seat, state)));
-      const result = search(deps, view, seat, { ...config, seed: `${config.seed}:${move++}` });
-      stats.valueSpan.push(result.valueRange.max - result.valueRange.min);
-      // Expensive -- a separate search per world -- so only sampled occasionally.
-      if (config.measureDisagreement && move % 12 === 0) {
-        const spread = measureDisagreement(deps, view, seat, { ...config, iterations: 120 }, 8);
-        stats.disagreement.push(spread.acrossWorlds);
-        stats.noiseFloor.push(spread.sameWorld);
-      }
-      return result.action;
-    },
-  };
-}
+  const started = Date.now();
+  const results = await runJobs(jobs, WORKERS);
+  const seconds = (Date.now() - started) / 1000;
 
-function randomPlayer(seed) {
-  const rng = new RandomCursor(seed, 0);
-  return {
-    stats: null,
-    choose(state, seat) {
-      const { actions } = splendorDuel.legalActions(state, seat);
-      return actions[rng.int(actions.length)];
-    },
-  };
-}
-
-/** One game. Returns the winning seat, or null for a draw / stall. */
-function playGame(players, seed) {
-  let state = splendorDuel.setup({ seed, seats: [0, 1], options: OPTIONS });
-  let moves = 0;
-  for (; moves < 4000; moves++) {
-    const outcome = splendorDuel.outcome(state);
-    if (outcome.status === 'over') {
-      return { winner: outcome.winners[0] ?? null, moves };
-    }
-    const seat = splendorDuel.currentActors(state)[0];
-    if (seat === undefined) break;
-    const action = players[seat].choose(state, seat);
-    const result = splendorDuel.apply(state, seat, action);
-    if (!result.ok) throw new Error(`self-play: ${result.error.code} ${result.error.message}`);
-    state = result.state;
-  }
-  return { winner: null, moves };
-}
-
-/**
- * Play a matchup, swapping seats every game.
- *
- * Splendor Duel's first player has an advantage, so a matchup that did not alternate would mostly
- * measure who got seat zero.
- */
-function matchup(label, makeA, makeB, games = GAMES) {
   let winsA = 0;
   let winsB = 0;
   let draws = 0;
   let totalMoves = 0;
-  const started = Date.now();
   const collected = { disagreement: [], noiseFloor: [], valueSpan: [] };
-
-  for (let game = 0; game < games; game++) {
-    const aFirst = game % 2 === 0;
-    const a = makeA(`a${game}`);
-    const b = makeB(`b${game}`);
-    const players = aFirst ? [a, b] : [b, a];
-    const { winner, moves } = playGame(players, `sp-${game}`);
-    totalMoves += moves;
-    for (const p of [a, b]) {
-      if (!p.stats) continue;
-      collected.disagreement.push(...p.stats.disagreement);
-      collected.noiseFloor.push(...p.stats.noiseFloor);
-      collected.valueSpan.push(...p.stats.valueSpan);
-    }
-    if (winner === null) draws += 1;
-    else if ((winner === 0) === aFirst) winsA += 1;
+  for (const r of results) {
+    totalMoves += r.moves;
+    if (r.aWon === null) draws += 1;
+    else if (r.aWon) winsA += 1;
     else winsB += 1;
+    collected.disagreement.push(...r.collected.disagreement);
+    collected.noiseFloor.push(...r.collected.noiseFloor);
+    collected.valueSpan.push(...r.collected.valueSpan);
   }
 
   const decided = winsA + winsB;
   const rate = decided === 0 ? 0.5 : winsA / decided;
-  const seconds = (Date.now() - started) / 1000;
   console.log(
     `  ${label.padEnd(38)} ${String(winsA).padStart(3)}-${String(winsB).padEnd(3)}` +
       `${draws > 0 ? ` (${draws} drawn)` : '        '}  ${(rate * 100).toFixed(0)}%  ` +
@@ -142,9 +82,10 @@ function matchup(label, makeA, makeB, games = GAMES) {
 
 const mean = (xs) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length);
 
-const ismcts = (overrides) => (seed) => ismctsPlayer({ ...DEFAULT_CONFIG, iterations: ITERATIONS, ...overrides, seed });
 
-console.log(`ISMCTS self-play — ${GAMES} games per matchup, ${ITERATIONS} iterations per move`);
+console.log(
+  `ISMCTS self-play — ${GAMES} games per matchup, ${ITERATIONS} iterations per move, ${WORKERS} worker(s)`,
+);
 // Worth stating, because the eye reads 10-6 as a result. At 16 games only a rout is significant:
 // 14-2 is about p=0.004, 12-4 about p=0.08, and 10-6 is indistinguishable from a coin.
 console.log(`At ${GAMES} games, roughly ${Math.ceil(GAMES * 0.78)}-${Math.floor(GAMES * 0.22)} is the`);
@@ -152,7 +93,7 @@ console.log('threshold for significance; anything closer than that is not eviden
 
 if (ONLY === 'all' || ONLY === 'sanity') {
   console.log('1. Is it playing at all?');
-  matchup('ismcts vs random', ismcts({}), (seed) => randomPlayer(seed));
+  await matchup('ismcts vs random', ismcts(), random());
   console.log();
 }
 
@@ -160,7 +101,7 @@ if (ONLY === 'all' || ONLY === 'budget') {
   console.log('2. Does more search make it stronger?');
   // If this is flat, the bottleneck is the evaluation, not the search -- which is the signal that a
   // learned value would start to be worth the trouble.
-  matchup(`${ITERATIONS * 4} iterations vs ${ITERATIONS}`, ismcts({ iterations: ITERATIONS * 4 }), ismcts({}));
+  await matchup(`${ITERATIONS * 4} iterations vs ${ITERATIONS}`, ismcts({ iterations: ITERATIONS * 4 }), ismcts());
   console.log();
 }
 
@@ -174,22 +115,37 @@ if (ONLY === 'all' || ONLY === 'ab') {
     ['heuristic shrinkage 0.5', { leaf: 'mixed', shrinkage: 0.5 }, { leaf: 'rollout', shrinkage: 0 }],
     ['heuristic only (no rollout)', { leaf: 'heuristic' }, { leaf: 'rollout' }],
     ['biased rollouts', { biasedRollout: true }, { biasedRollout: false }],
+    ['fast rollout sampler', { fastRollout: true }, { fastRollout: false }],
+    /*
+     * The comparison that actually decides it: nobody runs a search for a fixed number of
+     * simulations, they run it for a fixed number of seconds. The sampler is faster, so at equal
+     * time it gets proportionally more iterations.
+     *
+     * The multiplier has to track the *measured* speedup or the comparison is rigged. It was 2.6x
+     * before the sampler was taught to scan for affordable cards; that scan costs, and it is 1.8x
+     * now. Re-measure it if the sampler changes again.
+     */
+    [
+      'fast sampler, equal time',
+      { fastRollout: true, iterations: Math.round(ITERATIONS * FAST_SPEEDUP) },
+      { fastRollout: false },
+    ],
     ['value rescaling', { normaliseValues: true }, { normaliseValues: false }],
   ];
   for (const [label, on, off] of comparisons) {
     if (FILTER && !label.includes(FILTER)) continue;
-    matchup(label, ismcts(on), ismcts(off));
+    await matchup(label, ismcts(on), ismcts(off));
   }
   console.log();
 
   console.log('4. Against the plain baseline, everything off');
-  matchup('tuned vs baseline', ismcts({}), (seed) => ismctsPlayer({ ...BASELINE, iterations: ITERATIONS, seed }));
+  await matchup('tuned vs baseline', ismcts(), baseline());
   console.log();
 }
 
 if (ONLY === 'all' || ONLY === 'diagnostics') {
   console.log('5. Diagnostics');
-  const { collected } = matchup(
+  const { collected } = await matchup(
     'mirror match (score is meaningless)',
     ismcts({ measureDisagreement: true }),
     ismcts({ measureDisagreement: true }),
