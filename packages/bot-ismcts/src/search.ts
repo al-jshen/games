@@ -67,6 +67,8 @@ export interface SearchResult<A> {
   /** Visit share per action, most-visited first. The search's opinion, not just its pick. */
   ranking: { action: A; visits: number; value: number }[];
   iterations: number;
+  /** Visits carried over from a previous search, when the tree is being reused. */
+  inherited: number;
   /** Spread of leaf evaluations seen. Narrow means the exploration term is swamping the values. */
   valueRange: { min: number; max: number };
 }
@@ -77,9 +79,114 @@ export function search<S, A, V, O>(
   seat: Seat,
   config: SearchConfig = DEFAULT_CONFIG,
 ): SearchResult<A> {
+  return runSearch(deps, view, seat, config, newNode<A>());
+}
+
+/**
+ * A searcher that keeps its tree between moves.
+ *
+ * Tell it every action as it is applied — including your own, and including each step of a
+ * multi-part turn, since the tree has a node per decision rather than per turn. When it is next
+ * asked to move it walks that path from the old root and carries on from there.
+ */
+export function createSearcher<S, A, V, O>(
+  deps: SearchDeps<S, A, V, O>,
+  config: SearchConfig = DEFAULT_CONFIG,
+): Searcher<A, V> {
+  let root: Node<A> | null = null;
+  let since: string[] = [];
+  /*
+   * Advanced per call, because `runSearch` seeds a fresh cursor from `config.seed` every time. Reuse
+   * one seed for a whole game and every move would sample the identical set of worlds -- the search
+   * would look like it was working while examining the same handful of futures over and over.
+   */
+  let move = 0;
+
+  return {
+    observe(action: A): void {
+      since.push(key(action));
+    },
+    choose(view: V, seat: Seat): SearchResult<A> {
+      let start: Node<A> | null = config.reuseTree ? root : null;
+      // Walk the moves played since the last search. A gap anywhere -- an action nobody expanded --
+      // means there is nothing to inherit, and we start over.
+      for (const step of since) {
+        if (!start) break;
+        start = start.children.get(step) ?? null;
+      }
+      since = [];
+
+      const perMove = { ...config, seed: `${config.seed}:${move++}` };
+      if (start) pruneToLegal(deps, view, seat, start, perMove);
+      const inherited = start?.visits ?? 0;
+      const node = start ?? newNode<A>();
+      const result = runSearch(deps, view, seat, perMove, node, inherited);
+      root = config.reuseTree ? node : null;
+      return result;
+    },
+  };
+}
+
+export interface Searcher<A, V> {
+  choose(view: V, seat: Seat): SearchResult<A>;
+  observe(action: A): void;
+}
+
+/**
+ * Drop inherited children that are not legal in the position actually reached.
+ *
+ * Reuse is not simply sound under imperfect information, and this is why. A retained node pools
+ * statistics gathered across many *sampled* worlds, and where a chance event sits between the two
+ * searches those worlds diverge in public state — the clearest case being the opponent replenishing,
+ * which draws different tokens onto the board in every sample. The node "after their replenish" then
+ * holds moves that were legal against boards that never happened, and the most-visited of them can
+ * be one the real position rejects outright.
+ *
+ * Found the hard way: self-play died with "that cell does not hold a gold token", the search having
+ * proposed a reserve against a board it had imagined. Left unchecked those children also skew
+ * selection, so they are removed rather than merely skipped at the end.
+ *
+ * Only the acting seat's own moves are pruned, which is exactly what this node offers: their legality
+ * turns on public state plus that player's own cards, so every determinization agrees and one sample
+ * settles it.
+ */
+function pruneToLegal<S, A, V, O>(
+  deps: SearchDeps<S, A, V, O>,
+  view: V,
+  seat: Seat,
+  node: Node<A>,
+  config: SearchConfig,
+): void {
+  const world = deps.determinize(view, seat, new RandomCursor(`${config.seed}:prune`, 0));
+  const actor = deps.mod.currentActors(world)[0];
+  if (actor === undefined) return;
+  const legal = new Set(deps.mod.legalActions(world, actor).actions.map((a) => key(a)));
+
+  for (const k of [...node.children.keys()]) {
+    if (legal.has(k)) continue;
+    const child = node.children.get(k);
+    // Take the discarded statistics out of the parent too, or its visit count outruns its children.
+    if (child) {
+      node.visits -= child.visits;
+      node.total -= child.total;
+    }
+    node.children.delete(k);
+    node.actions.delete(k);
+    node.available.delete(k);
+  }
+  if (node.visits < 0) node.visits = 0;
+}
+
+function runSearch<S, A, V, O>(
+  deps: SearchDeps<S, A, V, O>,
+  view: V,
+  seat: Seat,
+  config: SearchConfig,
+  root: Node<A>,
+  inherited = 0,
+): SearchResult<A> {
   const { determinize } = deps;
   const rng = new RandomCursor(config.seed, 0);
-  const root = newNode<A>();
 
   /*
    * With common random numbers the same worlds are reused round-robin, so every action ends up
@@ -117,6 +224,7 @@ export function search<S, A, V, O>(
     action: ranking[0]!.action,
     ranking,
     iterations: config.iterations,
+    inherited,
     valueRange: { min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 },
   };
 }

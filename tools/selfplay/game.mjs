@@ -6,7 +6,7 @@
  */
 
 import { RandomCursor } from '@games/engine';
-import { search, measureDisagreement } from '@games/bot-ismcts';
+import { createSearcher, measureDisagreement } from '@games/bot-ismcts';
 import splendorDuel, {
   determinize,
   evaluate,
@@ -33,13 +33,24 @@ export const deps = {
 
 function ismctsPlayer(config) {
   let move = 0;
-  const stats = { disagreement: [], noiseFloor: [], valueSpan: [] };
+  const stats = { disagreement: [], noiseFloor: [], valueSpan: [], inherited: [] };
+  /*
+   * A searcher rather than a bare `search` call, so the tree can survive between turns. It has to be
+   * told every action applied -- including this player's own, and every step of a multi-part turn,
+   * since the tree has a node per decision and not per turn.
+   */
+  const searcher = createSearcher(deps, config);
   return {
     stats,
+    observe(action) {
+      searcher.observe(action);
+    },
     choose(state, seat) {
       const view = JSON.parse(JSON.stringify(redactFor(seat, state)));
-      const result = search(deps, view, seat, { ...config, seed: `${config.seed}:${move++}` });
+      const result = searcher.choose(view, seat);
+      move += 1;
       stats.valueSpan.push(result.valueRange.max - result.valueRange.min);
+      stats.inherited.push(result.inherited);
       // Expensive -- a separate search per world -- so only sampled occasionally.
       if (config.measureDisagreement && move % 12 === 0) {
         const spread = measureDisagreement(deps, view, seat, { ...config, iterations: 120 }, 8);
@@ -55,6 +66,7 @@ function randomPlayer(seed) {
   const rng = new RandomCursor(seed, 0);
   return {
     stats: null,
+    observe() {},
     choose(state, seat) {
       const { actions } = splendorDuel.legalActions(state, seat);
       return actions[rng.int(actions.length)];
@@ -93,14 +105,17 @@ export function playGame(job) {
     const result = splendorDuel.apply(state, seat, action);
     if (!result.ok) throw new Error(`self-play: ${result.error.code} ${result.error.message}`);
     state = result.state;
+    // Both players see every action, which is what lets a retained tree find its way forward.
+    for (const player of players) player.observe(action);
   }
 
-  const collected = { disagreement: [], noiseFloor: [], valueSpan: [] };
+  const collected = { disagreement: [], noiseFloor: [], valueSpan: [], inherited: [] };
   for (const player of [a, b]) {
     if (!player.stats) continue;
     collected.disagreement.push(...player.stats.disagreement);
     collected.noiseFloor.push(...player.stats.noiseFloor);
     collected.valueSpan.push(...player.stats.valueSpan);
+    collected.inherited.push(...player.stats.inherited);
   }
 
   return {
