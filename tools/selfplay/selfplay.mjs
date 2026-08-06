@@ -59,7 +59,7 @@ async function matchup(label, makeA, makeB, games = GAMES) {
   let winsB = 0;
   let draws = 0;
   let totalMoves = 0;
-  const collected = { disagreement: [], noiseFloor: [], valueSpan: [], inherited: [] };
+  const collected = { disagreement: [], noiseFloor: [], valueSpan: [] };
   for (const r of results) {
     totalMoves += r.moves;
     if (r.aWon === null) draws += 1;
@@ -68,7 +68,6 @@ async function matchup(label, makeA, makeB, games = GAMES) {
     collected.disagreement.push(...r.collected.disagreement);
     collected.noiseFloor.push(...r.collected.noiseFloor);
     collected.valueSpan.push(...r.collected.valueSpan);
-    collected.inherited.push(...(r.collected.inherited ?? []));
   }
 
   const decided = winsA + winsB;
@@ -132,7 +131,6 @@ if (ONLY === 'all' || ONLY === 'ab') {
       { fastRollout: false },
     ],
     ['value rescaling', { normaliseValues: true }, { normaliseValues: false }],
-    ['tree reuse between moves', { reuseTree: true }, { reuseTree: false }],
   ];
   for (const [label, on, off] of comparisons) {
     if (FILTER && !label.includes(FILTER)) continue;
@@ -153,7 +151,6 @@ if (ONLY === 'all' || ONLY === 'diagnostics') {
     ismcts({ measureDisagreement: true }),
     Math.max(4, Math.round(GAMES / 4)),
   );
-  const inherited = mean(collected.inherited);
   const disagreement = mean(collected.disagreement);
   const noise = mean(collected.noiseFloor);
   const excess = disagreement - noise;
@@ -166,17 +163,6 @@ if (ONLY === 'all' || ONLY === 'diagnostics') {
     excess < 0.1
       ? '    -> the worlds barely matter; nearly all the flipping is search noise, so strategy fusion has little room here'
       : '    -> the hidden state really does change the best move; fusion is worth taking seriously',
-  );
-  const headStart = inherited / ITERATIONS;
-  console.log(
-    `  visits inherited per move  ${inherited.toFixed(0)} on top of ${ITERATIONS} fresh ` +
-      `(${(headStart * 100).toFixed(0)}%)`,
-  );
-  console.log(
-    headStart < 0.25
-      ? '    -> a small head start. Reuse pays in games where you descend one ply between your own\n' +
-        '       turns; a Splendor turn is several actions, and each level divides the inherited visits'
-      : '    -> a substantial head start, worth most of an extra search',
   );
   console.log(`  leaf value spread    ${span.toFixed(3)} of a possible 2.0`);
   console.log(

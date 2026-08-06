@@ -65,20 +65,6 @@ export interface SearchConfig {
   worldPool: number;
 
   /**
-   * Keep the subtree under the moves actually played, instead of starting from nothing each turn.
-   *
-   * The node reached by the observed actions already carries statistics from last turn's search, so
-   * this turn starts partway done. Free iterations, in effect.
-   *
-   * It is an approximation under imperfect information, and worth knowing why: those statistics were
-   * gathered over worlds sampled from the *old* information set. If the opponent has since revealed
-   * something — buying a card out of a face-down reservation, say — then some of the worlds behind
-   * the inherited numbers are now known to be impossible. They are a prior, not a measurement, and
-   * further search corrects them.
-   */
-  reuseTree: boolean;
-
-  /**
    * Rescale sibling values into [0, 1] before applying the exploration term.
    *
    * UCB's constant assumes rewards spread across roughly [0, 1]. A heuristic that returns everything
@@ -100,7 +86,6 @@ export const BASELINE: SearchConfig = {
   shrinkage: 0,
   biasedRollout: false,
   fastRollout: false,
-  reuseTree: false,
   commonRandomNumbers: false,
   worldPool: 32,
   normaliseValues: false,
@@ -123,7 +108,6 @@ export const DEFAULT_CONFIG: SearchConfig = {
   shrinkage: 0.5,
   biasedRollout: true,
   fastRollout: true,
-  reuseTree: true,
   commonRandomNumbers: false,
   normaliseValues: true,
 };

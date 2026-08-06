@@ -54,7 +54,6 @@ symbol) showed **94% of self-play in two functions** — `apply` at 55% and `leg
 | Hand-written clone in `apply`, replacing a JSON round trip | copy 6.33µs → 0.23µs (**27x**), ~40% off total |
 | `sampleAction` fast path, replacing enumeration in rollouts | **1.8x** |
 | Worker-thread pool for self-play | **3.9x** on 9 workers |
-| Tree reuse between moves | ~11% head start, not the 2-4x it gives elsewhere |
 
 About **13x** end to end: 77ms per move down to 22ms, then divided across cores. Parallel scaling is
 sub-linear because the workload is allocation-heavy and threads contend for memory bandwidth, each
@@ -89,7 +88,6 @@ these reversed between 16 and 32 games, which is the argument for the threshold 
 | value rescaling | 22-10 | probably helping |
 | fast sampler, equal iterations | 19-13 | no longer worse, after the fix above |
 | biased rollouts | 17-15 | no evidence either way |
-| tree reuse between moves | 19-13 | unresolved; see below |
 | heuristic only, no rollout | 8-24 | **rollouts do matter** — this reversed at a bigger sample |
 
 Two things are worth taking from that.
@@ -109,25 +107,27 @@ time — but running the same measurement against a *single* world with differen
 of the time, so only about 4 points of that is the hidden state rather than search noise. Without
 that control the raw number would have looked alarming and meant nothing.
 
-## Tree reuse is worth less here than it usually is
+## Tree reuse was tried and removed
 
-Keeping the subtree under the moves played is normally good for 2-4x effective iterations. Measured
-here it carries **about 13 visits of 120 forward, an 11% head start**, and 19-13 in strength — real,
-but nothing like the usual claim.
+Keeping the subtree under the moves played is standard, and normally good for 2-4x effective
+iterations. Here it was worth **an 11% head start** — about 13 visits of 120 — and 19-13 in strength,
+which is not significant. The turn structure is why: reuse pays when you descend one ply between your
+own moves, and a Splendor Duel turn is several atomic decisions, so you descend three to five levels
+and each one splits the inherited visits across that node's options.
 
-The reason is the turn structure. Reuse pays when you descend one ply between your own moves. A
-Splendor Duel turn is *several* atomic decisions — spend a scroll, replenish, the main action, discard
-— so between two of your searches you descend three to five levels, and each level splits the
-inherited visits across that node's options. Little survives the trip.
+It was removed because it is also not sound under imperfect information, and the marginal gain did
+not justify the hazard. A retained node pools statistics gathered across many *sampled* worlds, and a
+chance event between two searches makes those worlds diverge in **public** state: when the opponent
+replenishes, every sample draws different tokens onto the board. The node "after their replenish"
+then holds moves that were legal against boards which never happened. Self-play died on one — a
+reserve against a cell that held gold only in the search's imagination.
 
-It also is not simply sound under imperfect information, which cost a crash to discover. A retained
-node pools statistics gathered across many *sampled* worlds, and a chance event between two searches
-makes those worlds diverge in **public** state: when the opponent replenishes, every sample draws
-different tokens onto the board. The node "after their replenish" then holds moves that were legal
-against boards that never happened, and the most-visited of them can be one the real position
-refuses. Self-play died with "that cell does not hold a gold token" — the search had proposed a
-reserve against a board it imagined. Inherited children are now pruned against the real position
-before the search resumes.
+Pruning inherited children against the real position fixed the crash, but not the deeper problem: the
+surviving moves' values were still averaged over boards that did not occur. A biased prior rather
+than an illegal move. For an unproven 11%, not worth carrying.
+
+Worth revisiting only if the search gets much deeper per turn, where the inheritance would survive
+further down.
 
 ## Verification
 
