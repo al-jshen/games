@@ -1,3 +1,6 @@
+import type { AnyGameModule } from '@games/engine';
+import splendorDuel from '@games/splendor-duel';
+import ticTacToe from '@games/tic-tac-toe';
 import type { ComponentType } from 'react';
 
 /**
@@ -16,6 +19,15 @@ export interface BoardProps {
   submit: (action: unknown) => void;
   /** True while a local move is awaiting server confirmation. */
   pending: boolean;
+  /**
+   * Show the position, offer nothing. Set by the replay viewer.
+   *
+   * Needed as its own flag because boards derive whose turn it is from the *view*, not from `actors`
+   * — deliberately, so an optimistic move renders consistently. That means an empty `actors` is not
+   * enough to make a board inert: mid-replay it would still be somebody's turn, and every affordance
+   * would light up for a move that cannot be submitted.
+   */
+  readOnly?: boolean;
 }
 
 export type BoardComponent = ComponentType<BoardProps>;
@@ -39,6 +51,20 @@ export interface BoardModule {
    * the board column competing with the board for height — Splendor Duel puts its turn guide here.
    */
   Sidebar?: BoardComponent;
+}
+
+/**
+ * The headless rules, eagerly available.
+ *
+ * These are the same pure modules the server runs, which is what lets the browser predict its own
+ * moves and step back through a finished game without asking for anything but the action log. They
+ * are small and already in the bundle for prediction, so there is nothing to gain by loading them
+ * lazily the way the boards are.
+ */
+const RULES: AnyGameModule[] = [splendorDuel as AnyGameModule, ticTacToe as AnyGameModule];
+
+export function gameRules(gameId: string | null): AnyGameModule | undefined {
+  return RULES.find((mod) => mod.id === gameId);
 }
 
 const BOARDS: Record<string, () => Promise<BoardModule>> = {

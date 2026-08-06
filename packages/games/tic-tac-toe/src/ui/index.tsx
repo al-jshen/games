@@ -10,6 +10,7 @@ export default function TicTacToeBoard({
   seat,
   submit,
   pending,
+  readOnly,
 }: {
   view: unknown;
   seat: number | null;
@@ -17,13 +18,15 @@ export default function TicTacToeBoard({
   actors?: number[];
   submit: (action: unknown) => void;
   pending: boolean;
+  /** Show the position without offering to change it, e.g. in a replay. */
+  readOnly?: boolean;
 }) {
   const view = raw as TicTacToeView | null;
   if (!view || seat === null) return <p className="muted">Waiting for the board…</p>;
 
   // From the view rather than the server's `actors`: while an optimistic move is unconfirmed those
   // disagree, and the view is what is on screen. See the same note in the Splendor Duel board.
-  const myTurn = view.turn === seat && view.winner === null && !view.draw;
+  const myTurn = view.turn === seat && view.winner === null && !view.draw && !readOnly;
   const myMark = seat === 0 ? 'x' : 'o';
 
   return (
@@ -36,9 +39,13 @@ export default function TicTacToeBoard({
             : 'You lost.'
           : view.draw
             ? 'Drawn.'
-            : myTurn
-              ? 'Your move.'
-              : "Opponent's move."}
+            : readOnly
+              ? view.turn === seat
+                ? 'Your move was next.'
+                : "Opponent's move was next."
+              : myTurn
+                ? 'Your move.'
+                : "Opponent's move."}
       </p>
       <div className="ttt-grid">
         {view.board.map((cell, i) => (

@@ -157,6 +157,13 @@ twice.
 so they come back on a reload and survive a restart — a game you put down for a week should not lose
 what was said in it. The last 200 are kept, and the replay endpoint does not serve them.
 
+**Rematch** seats you both in a new game with the sides swapped, no code to share — it needs your
+opponent present, since it hands each of you a seat token. **Finished games can be stepped through**
+move by move, from either side of the table: the server sends the seed and the action log, and the
+browser rebuilds every position through the same reducer that produced them. And a seat can be
+**carried to another device** with a short-lived link, which copies rather than moves it, so laptop and
+phone both keep working.
+
 **Undo needs both players to agree.** Either can propose taking the last move back — including the
 opponent's — and a dialog appears on both screens; nothing changes unless the other one accepts. It
 is mutual by design rather than by politeness: in a game with hidden information, taking back a move

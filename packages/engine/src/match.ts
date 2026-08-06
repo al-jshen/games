@@ -235,6 +235,56 @@ export function undoLast<S, A, V, O>(
   return { match: { record, state, version }, log, undone };
 }
 
+/**
+ * Every position a match passed through, for stepping back through a finished game.
+ *
+ * Same fold as `replay`, keeping each intermediate state instead of only the last. Index 0 is the
+ * opening position, so `frames[n]` is the board *after* n moves and `frames.length - 1` is the end.
+ *
+ * Kept separate from `replay` rather than folded into it because holding every state costs memory
+ * proportional to the match, and the server replays constantly (every resume) while caring only
+ * about the final position.
+ */
+export function replayFrames<S, A, V, O>(mod: GameModule<S, A, V, O>, record: MatchRecord): ReplayFrame<S>[] {
+  let state = mod.setup({
+    seed: record.seed,
+    seats: record.seats,
+    options: record.options as O,
+  });
+  const frames: ReplayFrame<S>[] = [{ version: 0, state, effects: [] }];
+
+  for (const logged of record.actions) {
+    const parsed = mod.actionValidator.validate(logged.action);
+    if (!parsed.ok) {
+      throw new Error(`replayFrames: action at version ${logged.version} failed validation: ${parsed.error}`);
+    }
+    const result = mod.apply(state, logged.seat, parsed.value);
+    if (!result.ok) {
+      throw new Error(
+        `replayFrames: action at version ${logged.version} was rejected: ${result.error.code} ${result.error.message}`,
+      );
+    }
+    state = result.state;
+    frames.push({
+      version: logged.version,
+      state,
+      seat: logged.seat,
+      at: logged.at,
+      effects: result.effects,
+    });
+  }
+  return frames;
+}
+
+/** One position in a replay. `seat`/`at` are absent on the opening frame, which nobody played. */
+export interface ReplayFrame<S> {
+  version: number;
+  state: S;
+  seat?: Seat;
+  at?: number;
+  effects: Effect[];
+}
+
 /** One replayed action's contribution to the move log. */
 export interface ReplayedTurn {
   version: number;

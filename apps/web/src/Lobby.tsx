@@ -64,6 +64,8 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
         onClosed={(code) => setResumable((prev) => (prev ?? []).filter((m) => m.code !== code))}
       />
 
+      <FinishedPanel matches={resumable} games={match.games} />
+
       <section className="panel">
         <h2>Start a match</h2>
         <div className="game-grid">
@@ -139,6 +141,42 @@ function ResumePanel({
       <ul className="resume-list">
         {unfinished.map((m) => (
           <ResumeEntry key={m.code} match={m} title={titleOf(m.gameId)} onClosed={onClosed} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Games of yours that are over. The seat tokens are still in this browser, and the record is still on
+ * the server, so the only thing missing was somewhere to click.
+ */
+function FinishedPanel({
+  matches,
+  games,
+}: {
+  matches: ResumableMatch[] | null;
+  games: { id: string; title: string }[];
+}) {
+  const finished = (matches ?? []).filter((m) => m.status === 'finished').slice(0, 6);
+  if (finished.length === 0) return null;
+  const titleOf = (gameId: string) => games.find((g) => g.id === gameId)?.title ?? gameId;
+
+  return (
+    <section className="panel">
+      <h2>Finished games</h2>
+      <p className="muted">Step back through one move at a time, from either side of the table.</p>
+      <ul className="resume-list">
+        {finished.map((m) => (
+          <li key={m.code} className="resume-row">
+            <a className="resume-item" href={`/r/${m.code}`}>
+              <span className="resume-title">{titleOf(m.gameId)}</span>
+              <span className="resume-code">{m.code}</span>
+              <span className="muted">
+                {m.moves} move{m.moves === 1 ? '' : 's'}
+              </span>
+            </a>
+          </li>
         ))}
       </ul>
     </section>

@@ -58,6 +58,11 @@ export interface MatchState {
   lastUndo: { accepted: boolean; by?: number; reason?: string } | null;
   /** Table talk, oldest first. */
   chat: ChatMessage[];
+  /**
+   * Set once a rematch exists and this client holds a seat in it. The token is already stored, so the
+   * app only has to navigate; the new match is entered the same way any other resume is.
+   */
+  rematch: { code: string; by: number } | null;
 }
 
 export interface PendingUndoState {
@@ -131,6 +136,7 @@ export class GameClient {
     undo: null,
     lastUndo: null,
     chat: [],
+    rematch: null,
     error: null,
     pending: false,
     legal: null,
@@ -347,6 +353,16 @@ export class GameClient {
         });
         return;
 
+      case 'rematch':
+        /*
+         * Store the seat token before announcing it. The app navigates on this, and arriving at the
+         * new match without its token would mean asking to join a room that already has both seats
+         * filled -- so the order matters.
+         */
+        this.saveToken(frame.code, frame.sessionToken);
+        this.patch({ rematch: { code: frame.code, by: frame.by } });
+        return;
+
       case 'chat': {
         // Ignore a line we already have: a reconnect can deliver a sync and a broadcast that overlap.
         if (this.state.chat.some((m) => m.id === frame.message.id)) return;
@@ -451,6 +467,11 @@ export class GameClient {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
     this.send({ t: 'chat', text: trimmed.slice(0, 500) });
+  }
+
+  /** Play again: same game, same two people, sides swapped. Both must be connected. */
+  requestRematch(): void {
+    this.send({ t: 'rematch' });
   }
 
   /** Propose taking the last move back. Does nothing until the other player agrees. */

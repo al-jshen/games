@@ -16,6 +16,17 @@ export interface SessionClaim {
   playerId: string;
   /** Issued-at, epoch ms. */
   iat: number;
+  /**
+   * `'transfer'` marks a short-lived token minted to carry a seat to another device. Absent on an
+   * ordinary session token, which does not expire.
+   *
+   * The distinction is load-bearing: a transfer token travels through a clipboard and probably a chat
+   * app, so it must stop working quickly, and it must not be usable as a session on its own — a
+   * device redeems it for a real one and keeps that.
+   */
+  kind?: 'transfer';
+  /** Expiry, epoch ms. Only on transfer tokens. */
+  exp?: number;
 }
 
 function b64url(buf: Buffer): string {
@@ -31,7 +42,13 @@ export function mintToken(secret: string, claim: SessionClaim): string {
   return `${body}.${sign(secret, body)}`;
 }
 
-export function verifyToken(secret: string, token: string): SessionClaim | null {
+/**
+ * Verify and decode, rejecting anything expired.
+ *
+ * `now` is a parameter so the expiry can be tested without waiting for it, and so a caller can be
+ * explicit about which clock it means.
+ */
+export function verifyToken(secret: string, token: string, now = Date.now()): SessionClaim | null {
   const dot = token.indexOf('.');
   if (dot <= 0) return null;
   const body = token.slice(0, dot);
@@ -43,10 +60,33 @@ export function verifyToken(secret: string, token: string): SessionClaim | null 
   try {
     const claim = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as SessionClaim;
     if (typeof claim.matchId !== 'string' || typeof claim.seat !== 'number') return null;
+    // A signature proves we minted it, not that it is still good.
+    if (typeof claim.exp === 'number' && now >= claim.exp) return null;
     return claim;
   } catch {
     return null;
   }
+}
+
+/** How long a transfer link is good for. Long enough to send to yourself, short enough to matter. */
+export const TRANSFER_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * A token that carries a seat to another device, and nothing else.
+ *
+ * Same seat, same signature, but it expires and it is marked, so the socket path can refuse it. What
+ * the other device does with it is exchange it for an ordinary session token, which is the one that
+ * lasts.
+ */
+export function mintTransferToken(secret: string, claim: SessionClaim, now = Date.now()): string {
+  return mintToken(secret, {
+    matchId: claim.matchId,
+    seat: claim.seat,
+    playerId: claim.playerId,
+    iat: now,
+    kind: 'transfer',
+    exp: now + TRANSFER_TTL_MS,
+  });
 }
 
 export function newPlayerId(): string {

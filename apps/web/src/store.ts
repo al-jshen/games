@@ -43,3 +43,9 @@ export function pushRoomUrl(code: string): void {
 export function pushHomeUrl(): void {
   if (location.pathname !== '/') history.pushState({}, '', '/');
 }
+
+/** The code from a `/r/ABC234` replay link, or `null` when this is not one. */
+export function replayCodeFromLocation(): string | null {
+  const match = /^\/r\/([A-Za-z0-9-]+)\/?$/.exec(location.pathname);
+  return match?.[1]?.toUpperCase() ?? null;
+}

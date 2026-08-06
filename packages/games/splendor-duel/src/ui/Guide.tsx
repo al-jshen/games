@@ -204,8 +204,13 @@ export function TurnGuide({
 }) {
   return (
     <div className="sd-guide">
+      {/*
+        Short headings on purpose. Beside the help button in a 250px column, "Your turn — you can:"
+        wrapped to two lines and cost 45px of fixed chrome — in the one panel whose entire job is to
+        show as much content as it can. The bullets underneath already read as things you can do.
+      */}
       <header>
-        <strong>{myTurn ? 'Your turn — you can:' : 'Waiting for your opponent'}</strong>
+        <strong>{myTurn ? 'Your turn' : "Opponent's turn"}</strong>
         <button type="button" className="mini" onClick={onOpenHelp}>
           Rules &amp; help
         </button>

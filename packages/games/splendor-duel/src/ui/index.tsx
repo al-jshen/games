@@ -35,6 +35,8 @@ interface BoardProps {
   actors: number[];
   submit: (action: unknown) => void;
   pending: boolean;
+  /** Show the position without offering to change it, e.g. in a replay. */
+  readOnly?: boolean;
 }
 
 const SEEN_HELP = 'sd:seen-help';
@@ -69,7 +71,7 @@ type Mode =
   | { k: 'reserve'; from: ReserveSource }
   | { k: 'buy'; ref: BuyRef };
 
-export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pending }: BoardProps) {
+export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pending, readOnly }: BoardProps) {
   const view = raw as SplendorView | null;
   const [selectedCells, setSelectedCells] = useState<number[]>([]);
   const [mode, setMode] = useState<Mode>({ k: 'idle' });
@@ -122,7 +124,9 @@ export default function SplendorDuelBoard({ view: raw, seat, actors, submit, pen
   const me = view.players[seat as 0 | 1];
   const them = view.players[(1 - seat) as 0 | 1];
   const decided = view.pending;
-  const locked = pending || !myTurn;
+  // `readOnly` as well as `!myTurn`: mid-replay it *is* somebody's turn, and without this every
+  // affordance would light up for a move that goes nowhere.
+  const locked = pending || !myTurn || Boolean(readOnly);
 
   /* ------------------------------------------------------------ derived affordances */
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
+import { describeEffect } from './effects.js';
+import { seatTransferLink } from './resumable.js';
 import { fullMoveTime, isRealTimestamp, moveTimeLabel } from './time.js';
 import { client, useMatch } from './store.js';
 
@@ -28,6 +30,16 @@ export function Room({ onLeave }: { onLeave: () => void }) {
   const waiting = match.players.length < 2;
   const outcome = match.confirmed?.outcome;
   const over = outcome?.status === 'over';
+  const bothHere = match.players.length === 2 && match.players.every((p) => p.connected);
+
+  /*
+   * The rematch arrives as a seat token, already stored. Navigating is what enters it — a full load
+   * rather than a state swap, so nothing from the finished match can linger in a board that is now
+   * showing a different one.
+   */
+  useEffect(() => {
+    if (match.rematch) location.assign(`/g/${match.rematch.code}`);
+  }, [match.rematch]);
 
   return (
     <main className="room">
@@ -67,9 +79,24 @@ export function Room({ onLeave }: { onLeave: () => void }) {
               {outcome.reason === 'draw' && 'No moves left.'}
               {outcome.reason === 'stalled' && 'Stall limit reached (house rule).'}
             </p>
-            <button type="button" onClick={onLeave}>
-              Back to lobby
-            </button>
+            <div className="row">
+              <button type="button" onClick={() => client.requestRematch()} disabled={!bothHere}>
+                Rematch
+              </button>
+              <button type="button" className="mini" onClick={onLeave}>
+                Back to lobby
+              </button>
+              {match.code && (
+                <a className="mini button-like" href={`/r/${match.code}`}>
+                  Review the game
+                </a>
+              )}
+            </div>
+            {!bothHere && (
+              <p className="muted small">
+                A rematch needs your opponent here — it seats you both, so there is no code to send.
+              </p>
+            )}
           </section>
         )}
 
@@ -140,7 +167,64 @@ function ShareCode({ code, waiting }: { code: string | null; waiting: boolean })
           {copied === 'link' ? 'Copied' : 'Copy link'}
         </button>
       </div>
+      <SeatTransfer code={code} />
     </section>
+  );
+}
+
+/**
+ * Carry this seat to another device.
+ *
+ * Your seat lives in this browser's storage, which is why the games list only ever knows about this
+ * browser. This hands over a link that puts the same seat on your phone — and it is a real credential
+ * for the length of its life, so it says so, and it expires in minutes rather than never.
+ */
+function SeatTransfer({ code }: { code: string }) {
+  const [link, setLink] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const request = async () => {
+    setBusy(true);
+    setError(null);
+    const result = await seatTransferLink(code);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    setLink(result.link);
+    try {
+      await navigator.clipboard.writeText(result.link);
+      setCopied(true);
+    } catch {
+      // Denied; the link is on screen to copy by hand.
+    }
+  };
+
+  if (!link) {
+    return (
+      <div className="seat-transfer">
+        <button type="button" className="mini" disabled={busy} onClick={() => void request()}>
+          {busy ? 'Preparing…' : 'Play on another device'}
+        </button>
+        {error && <p className="error small">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="seat-transfer">
+      <p className="muted small">
+        {copied ? 'Link copied. ' : ''}Open this on your other device within 10 minutes. Anyone who has
+        it can play as you until then.
+      </p>
+      <input className="seat-link" readOnly value={link} aria-label="Seat transfer link" onFocus={(e) => e.target.select()} />
+      <button type="button" className="mini" onClick={() => setLink(null)}>
+        Done
+      </button>
+    </div>
   );
 }
 
@@ -332,47 +416,3 @@ function UndoDialog({ describe }: { describe?: EffectDescriber }) {
   );
 }
 
-/** Game-agnostic fallback. Anything game-specific belongs in that game's own describer. */
-function describeEffect(effect: Record<string, unknown>, actorSeat: number): string {
-  const k = String(effect.k);
-  switch (k) {
-    case 'tookTokens':
-      return `took ${(effect.colors as string[]).join(', ')}`;
-    case 'privilegeUsed':
-      return `spent a privilege for ${String(effect.color)}`;
-    case 'replenished':
-      {
-        const placed = (effect.placed as unknown[]).length;
-        return `replenished ${placed} token${placed === 1 ? '' : 's'}`;
-      }
-    case 'purchased':
-      return `bought ${String(effect.cardId)}${effect.wildColor ? ` as ${String(effect.wildColor)}` : ''}`;
-    case 'reserved':
-      return `reserved ${effect.cardId ? String(effect.cardId) : 'a hidden card'}`;
-    case 'stolen':
-      return `stole a ${String(effect.color)}`;
-    case 'matchingTokenTaken':
-      return `took a bonus ${String(effect.color)}`;
-    case 'royalTaken':
-      return `claimed ${String(effect.royalId)}`;
-    case 'discarded':
-      return `discarded ${Object.entries(effect.tokens as Record<string, number>).map(([c, n]) => `${n} ${c}`).join(', ')}`;
-    case 'privilegeGranted': {
-      // Whoever gained it is not always whoever moved -- replenishing hands one to the opponent.
-      if (effect.from === 'none') return '';
-      return effect.seat === actorSeat ? 'gained a privilege' : 'opponent gained a privilege';
-    }
-    case 'abilityResolved':
-      return String(effect.ability) === 'playAgain' ? 'takes another turn' : '';
-    case 'abilitySkipped':
-      return '';
-    case 'passed':
-      return 'passed (no legal move)';
-    case 'placed':
-      return `played ${String(effect.mark)} at ${String(effect.cell)}`;
-    case 'gameOver':
-      return 'game over';
-    default:
-      return '';
-  }
-}

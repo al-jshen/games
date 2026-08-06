@@ -101,6 +101,78 @@ export async function closeMatch(code: string): Promise<{ ok: boolean; message?:
   }
 }
 
+/** Where a transfer link carries the seat. A fragment, never a query: see `redeemSeatFromUrl`. */
+const SEAT_FRAGMENT = 'seat=';
+
+/**
+ * Ask for a link that carries this seat to another device.
+ *
+ * The token goes in the URL *fragment*, which browsers do not send to the server — so it stays out of
+ * access logs, proxy logs and `Referer` headers, the same reason the socket takes its token in a
+ * frame rather than a query string.
+ */
+export async function seatTransferLink(code: string): Promise<{ ok: true; link: string; expiresAt: number } | { ok: false; message: string }> {
+  const sessionToken = tokenFor(code);
+  if (!sessionToken) return { ok: false, message: 'This browser does not hold a seat in that match.' };
+  try {
+    const res = await fetch(`/api/matches/${code}/transfer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionToken }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      return { ok: false, message: body.message ?? `The server refused (${res.status}).` };
+    }
+    const body = (await res.json()) as { transferToken: string; expiresAt: number };
+    return {
+      ok: true,
+      link: `${location.origin}/g/${code}#${SEAT_FRAGMENT}${encodeURIComponent(body.transferToken)}`,
+      expiresAt: body.expiresAt,
+    };
+  } catch {
+    return { ok: false, message: 'Could not reach the server.' };
+  }
+}
+
+/**
+ * If this page was opened from a transfer link, exchange the fragment for a real seat.
+ *
+ * The fragment is stripped either way, so a reload cannot try to redeem a token that has already been
+ * spent, and so the credential does not sit in the address bar to be copied onward by accident.
+ */
+export async function redeemSeatFromUrl(): Promise<{ redeemed: boolean; error?: string }> {
+  const hash = location.hash.replace(/^#/, '');
+  if (!hash.startsWith(SEAT_FRAGMENT)) return { redeemed: false };
+  const transferToken = decodeURIComponent(hash.slice(SEAT_FRAGMENT.length));
+  const code = /^\/g\/([A-Za-z0-9-]+)\/?$/.exec(location.pathname)?.[1]?.toUpperCase();
+
+  const clearFragment = () => history.replaceState({}, '', location.pathname + location.search);
+  if (!code || !transferToken) {
+    clearFragment();
+    return { redeemed: false };
+  }
+
+  try {
+    const res = await fetch(`/api/matches/${code}/claim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ transferToken }),
+    });
+    clearFragment();
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      return { redeemed: false, error: body.message ?? 'That transfer link did not work.' };
+    }
+    const body = (await res.json()) as { sessionToken: string };
+    localStorage.setItem(`${TOKEN_PREFIX}${code}`, body.sessionToken);
+    return { redeemed: true };
+  } catch {
+    clearFragment();
+    return { redeemed: false, error: 'Could not reach the server.' };
+  }
+}
+
 /**
  * Look up every held code, newest first. Codes the server has never heard of are dropped from
  * storage as we go, so a browser does not accumulate dead seats forever.

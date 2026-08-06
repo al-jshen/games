@@ -473,6 +473,19 @@ export class Room {
   }
 }
 
+/**
+ * Does this claim name a seat the record actually recognises?
+ *
+ * Records written before seats were durable have no list to check against; there the signature is the
+ * proof, and the seat number merely has to be one the match has.
+ */
+export function claimHoldsSeat(record: MatchRecord, claim: SessionClaim): boolean {
+  if (claim.matchId !== record.matchId) return false;
+  return record.players?.length
+    ? record.players.some((p) => p.seat === claim.seat && p.playerId === claim.playerId)
+    : record.seats.includes(claim.seat as Seat);
+}
+
 export class RoomRegistry {
   private readonly byCode = new Map<string, Room>();
   private readonly byMatchId = new Map<string, Room>();
@@ -513,6 +526,45 @@ export class RoomRegistry {
 
   get(matchId: string): Room | undefined {
     return this.byMatchId.get(matchId);
+  }
+
+  /**
+   * Start a fresh match between the same two people, with the sides swapped.
+   *
+   * Swapped because going first is worth something in most two-player games, and a rematch where the
+   * same player keeps the advantage is not much of one.
+   *
+   * Both players are seated here rather than one creating and the other joining by code, so nobody
+   * has to copy anything — which is the entire point. That does mean both have to be connected: a
+   * seat is only useful with the token that proves it, and there is nowhere to deliver a token to
+   * somebody who is not here. The caller checks that and says so.
+   */
+  createRematch(
+    previous: Room,
+  ): { ok: true; room: Room; seatOf: Map<Seat, Seat> } | { ok: false; code: string; message: string } {
+    const created = this.create(previous.gameId, previous.match.record.options);
+    if (!created.ok) return created;
+
+    // Highest seat first, so the player who moved second in the last game moves first in this one.
+    const order = [...previous.seats].sort((a, b) => b.seat - a.seat);
+    /*
+     * The mapping is returned rather than left for the caller to work out by matching names. Two
+     * players are perfectly entitled to share a name -- both defaults are "Player N", and nothing
+     * stops two people typing the same thing -- and pairing on it would then hand somebody the wrong
+     * seat's token, which is the one mistake here that would let one player act as the other.
+     */
+    const seatOf = new Map<Seat, Seat>();
+    for (const holder of order) {
+      const taken = created.room.addSeat(holder.name);
+      if (!taken) break;
+      seatOf.set(holder.seat, taken.seat);
+    }
+    return { ok: true, room: created.room, seatOf };
+  }
+
+  /** The record behind a code, without rebuilding the room for it. */
+  async recordForCode(code: string): Promise<MatchRecord | null> {
+    return this.byCode.get(code)?.match.record ?? (await this.store.findByCode(code));
   }
 
   /** Resident, or rebuilt from disk. This is the lookup every join path should use. */
@@ -644,12 +696,7 @@ export class RoomRegistry {
     if (claim.matchId !== record.matchId) {
       return { ok: false, code: ErrorCodes.BAD_SESSION, message: 'That session is for a different match.' };
     }
-    // The seat has to be one this server actually issued for this match. Records written before
-    // seats were durable have no list to check against, and the signature is the proof there.
-    const seated = record.players?.length
-      ? record.players.some((p) => p.seat === claim.seat && p.playerId === claim.playerId)
-      : record.seats.includes(claim.seat as Seat);
-    if (!seated) {
+    if (!claimHoldsSeat(record, claim)) {
       return { ok: false, code: ErrorCodes.BAD_SESSION, message: 'You do not hold a seat in that match.' };
     }
 

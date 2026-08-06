@@ -247,7 +247,13 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
 
           let resumed = false;
           if (frame.sessionToken) {
-            const claim = verifyToken(deps.secret, frame.sessionToken);
+            const verified = verifyToken(deps.secret, frame.sessionToken);
+            /*
+             * A transfer token is a one-hop carrier for a seat, not a credential to play with. It
+             * travels through a clipboard and probably a chat app, so accepting it here would turn a
+             * link somebody pasted to themselves into a permanent way into the match.
+             */
+            const claim = verified?.kind === 'transfer' ? null : verified;
             // Resident or rebuilt from disk: a token stays good across an eviction and a restart,
             // which is what makes "close the tab and come back tomorrow" work.
             const room = claim ? await deps.rooms.resumeByMatchId(claim.matchId) : undefined;
@@ -450,6 +456,56 @@ export function attachSocketServer(wss: WebSocketServer, deps: SocketDeps): () =
             return;
           }
           send(ws, { t: 'sync', snapshot: room.snapshot(seat), log: room.redactedLog(seat), chat: [...room.chat] });
+          return;
+        }
+
+        case 'rematch': {
+          const { room, seat } = state;
+          if (!room || seat === null) {
+            fail(ws, ErrorCodes.NOT_IN_MATCH, 'Join a match first.');
+            return;
+          }
+          if (room.outcome().status !== 'over') {
+            fail(ws, ErrorCodes.ILLEGAL_ACTION, 'Finish this match before starting another.');
+            return;
+          }
+          if (room.connectedCount < room.seats.length) {
+            // Each player is handed a seat token for the new match, and there is nowhere to deliver
+            // one to somebody who has gone. Sharing a fresh code still works when they are not here.
+            fail(ws, ErrorCodes.ILLEGAL_ACTION, 'Your opponent needs to be here for a rematch.');
+            return;
+          }
+
+          const created = deps.rooms.createRematch(room);
+          if (!created.ok) {
+            fail(ws, created.code, created.message);
+            return;
+          }
+
+          /*
+           * Sides are swapped, so nobody's new seat is the one they just had. The registry hands back
+           * the mapping rather than leaving it to be guessed from names, and each player's sockets get
+           * the token for the seat that is actually theirs.
+           */
+          const next = created.room;
+          for (const previous of room.seats) {
+            const newSeat = created.seatOf.get(previous.seat);
+            const mine = newSeat === undefined ? undefined : next.seatAt(newSeat);
+            if (!mine) continue;
+            const token = next.tokenFor(mine, deps.secret);
+            for (const conn of previous.sockets) {
+              conn.send({
+                t: 'rematch',
+                code: next.code,
+                matchId: next.matchId,
+                gameId: next.gameId,
+                seat: mine.seat,
+                sessionToken: token,
+                by: seat,
+              });
+            }
+          }
+          savePoint(next);
           return;
         }
 

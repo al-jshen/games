@@ -139,13 +139,13 @@ test.describe('Splendor Duel board', () => {
     const waiting = hostToMove ? guest : host;
 
     const guide = active.locator('.sd-guide');
-    await expect(guide).toContainText('Your turn — you can:');
+    await expect(guide).toContainText('Your turn');
     await expect(guide).toContainText('Take up to 3 tokens');
     // Turn one: the bag is empty and nothing is affordable yet, so those must not be offered.
     await expect(guide).not.toContainText('Replenish the board');
     await expect(guide).toContainText('No card is affordable yet');
 
-    await expect(waiting.locator('.sd-guide')).toContainText('Waiting for your opponent');
+    await expect(waiting.locator('.sd-guide')).toContainText("Opponent's turn");
     // The action buttons are not merely disabled for the waiting player, they are absent -- there is
     // nothing for them to do, so offering greyed-out controls would just be noise.
     await expect(waiting.getByRole('button', { name: /^Take/ })).toHaveCount(0);
@@ -191,7 +191,7 @@ test.describe('Splendor Duel board', () => {
 
     // The mover now holds tokens, and the turn has passed.
     await expect(active.locator('.sd-player').last().locator('.sd-tokens svg')).not.toHaveCount(tokensBefore);
-    await expect(active.locator('.sd-guide')).toContainText('Waiting for your opponent');
+    await expect(active.locator('.sd-guide')).toContainText("Opponent's turn");
 
     // The opponent's board reflects it too, and the move shows up in the log.
     await expect(other.locator('.sd-guide')).toContainText('Your turn');
@@ -314,6 +314,234 @@ test.describe('reserved cards', () => {
 
     await host.close();
     await guest.close();
+  });
+});
+
+test.describe('taking a seat to another device', () => {
+  test('a transfer link seats a completely separate browser', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Splendor Duel');
+    await dismissHelp(host);
+    await dismissHelp(guest);
+
+    const mover = (await host.locator('.sd-guide', { hasText: 'Your turn' }).isVisible()) ? host : guest;
+    await mover.locator('.token-board .cell-selectable').first().click();
+    await mover.getByRole('button', { name: /^Take/ }).click();
+    await expect(mover.locator('.log li')).toHaveCount(1);
+
+    /*
+     * Transfer the seat of whoever is to move *next*, not an arbitrary one. That makes the last step
+     * -- proving the phone holds a playable seat rather than a read-only view -- unconditional. An
+     * earlier version transferred a fixed player and then only acted "if it happens to be their
+     * turn", which passed or hung depending on who the server dealt the first move to.
+     */
+    const laptop = mover === host ? guest : host;
+    const name = laptop === host ? 'Ann' : 'Ben';
+    await expect(laptop.locator('.sd-guide', { hasText: 'Your turn' })).toBeVisible();
+
+    await laptop.getByRole('button', { name: 'Play on another device' }).click();
+    const link = await laptop.getByLabel('Seat transfer link').inputValue();
+    // The token rides in the fragment, which browsers never send to the server — so it stays out of
+    // access logs and Referer headers.
+    expect(link).toContain(`/g/${code}#seat=`);
+
+    /*
+     * A genuinely separate context: its own storage, holding no seat for this match. Without the
+     * link it would be told the match already has both players.
+     */
+    const phoneCtx = await browser.newContext();
+    const phone = await phoneCtx.newPage();
+    await phone.goto(link.replace(/^https?:\/\/[^/]+/, ''));
+    await expect(phone.getByText('Connected')).toBeVisible();
+
+    // Same seat, same board, same history — and no error banner.
+    await expect(phone.locator('.code-display')).toHaveText(code);
+    await expect(phone.locator('.players li', { hasText: `${name} (you)` })).toBeVisible();
+    await expect(phone.locator('.log li')).toHaveCount(1);
+    await expect(phone.locator('.banner.error')).toHaveCount(0);
+
+    // The credential is not left sitting in the address bar to be copied onward by accident.
+    expect(phone.url()).not.toContain('#seat=');
+
+    // The laptop still holds the seat: this copies it rather than moving it.
+    await expect(laptop.locator('.players li', { hasText: `${name} (you)` })).toBeVisible();
+    await expect(laptop.locator('.banner.error')).toHaveCount(0);
+
+    // A real seat, not a read-only view: the phone takes the turn, and the laptop sees it.
+    await dismissHelp(phone);
+    await expect(phone.locator('.sd-guide', { hasText: 'Your turn' })).toBeVisible();
+    await phone.locator('.token-board .cell-selectable').first().click();
+    await phone.getByRole('button', { name: /^Take/ }).click();
+    await expect(laptop.locator('.log li')).toHaveCount(2);
+
+    expect(problemsOf(phone)).toEqual([]);
+    await phoneCtx.close();
+    await host.close();
+    await guest.close();
+  });
+
+  test('a link that is not valid says so instead of failing silently', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Splendor Duel');
+
+    const phoneCtx = await browser.newContext();
+    const phone = await phoneCtx.newPage();
+    await phone.goto(`/g/${code}#seat=obviously-not-a-real-token`);
+    await expect(phone.getByRole('alert')).toContainText(/not valid|expired/i);
+    // Fragment cleared either way, so a reload does not try to spend it again.
+    expect(phone.url()).not.toContain('#seat=');
+
+    await phoneCtx.close();
+    await host.close();
+    await guest.close();
+  });
+});
+
+test.describe('rematch', () => {
+  test('puts both players straight into a new game with the sides swapped', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const first = await pairUp(host, guest, 'Tic-Tac-Toe');
+
+    // Ann is seat 0 and moves first; play a game out.
+    await expect(host.locator('.players li', { hasText: 'Ann (you)' })).toContainText('to move');
+    for (const [i, cell] of [0, 3, 1, 4, 2].entries()) {
+      const who = i % 2 === 0 ? host : guest;
+      await who.locator('.ttt-cell').nth(cell).click();
+      await host.waitForTimeout(60);
+    }
+    await expect(host.locator('.result')).toBeVisible();
+
+    await host.getByRole('button', { name: 'Rematch' }).click();
+
+    // Both land in the same new match, seated, with no code to copy anywhere.
+    await expect(host.locator('.code-display')).not.toHaveText(first);
+    const second = ((await host.locator('.code-display').textContent()) ?? '').trim();
+    expect(second).toMatch(/^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{6}$/);
+    await expect(guest.locator('.code-display')).toHaveText(second);
+    await expect(host.locator('.players li')).toHaveCount(2);
+    await expect(guest.locator('.players li')).toHaveCount(2);
+
+    // Sides swapped: Ben moved second last time, so Ben moves first now.
+    await expect(guest.locator('.players li', { hasText: 'Ben (you)' })).toContainText('to move');
+    await expect(host.locator('.players li', { hasText: 'Ann (you)' })).not.toContainText('to move');
+
+    // A clean board, and it is really playable.
+    await expect(host.locator('.ttt-cell', { hasText: /[XO]/ })).toHaveCount(0);
+    await guest.locator('.ttt-cell').nth(4).click();
+    // X, not O: the mark belongs to the seat, and Ben now holds the one that moves first.
+    await expect(host.locator('.ttt-cell').nth(4)).toHaveText('X');
+
+    expect(problemsOf(host)).toEqual([]);
+    expect(problemsOf(guest)).toEqual([]);
+    await host.close();
+    await guest.close();
+  });
+
+  test('needs the opponent present, and says so', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    await pairUp(host, guest, 'Tic-Tac-Toe');
+    for (const [i, cell] of [0, 3, 1, 4, 2].entries()) {
+      const who = i % 2 === 0 ? host : guest;
+      await who.locator('.ttt-cell').nth(cell).click();
+      await host.waitForTimeout(60);
+    }
+    await expect(host.locator('.result')).toBeVisible();
+
+    // The opponent closes their tab: there is now nowhere to deliver their seat token.
+    await guest.close();
+    await expect(host.locator('.players li', { hasText: 'Ben' })).toContainText('away');
+    await expect(host.getByRole('button', { name: 'Rematch' })).toBeDisabled();
+    await expect(host.locator('.result')).toContainText('needs your opponent here');
+
+    await host.close();
+  });
+});
+
+test.describe('replaying a finished game', () => {
+  test('steps through a finished match from either side of the table', async ({ browser }) => {
+    const host = await openPlayer(browser, 'Ann');
+    const guest = await openPlayer(browser, 'Ben');
+    const code = await pairUp(host, guest, 'Tic-Tac-Toe');
+
+    // A real, finished game: top row for Ann.
+    for (const [i, cell] of [0, 3, 1, 4, 2].entries()) {
+      const who = i % 2 === 0 ? host : guest;
+      await who.locator('.ttt-cell').nth(cell).click();
+      await host.waitForTimeout(60);
+    }
+    await expect(host.locator('.result')).toBeVisible();
+
+    // The way in is from the result panel.
+    await host.getByRole('link', { name: 'Review the game' }).click();
+    await expect(host).toHaveURL(new RegExp(`/r/${code}$`));
+
+    /*
+     * The replay is rebuilt in the browser from the seed and the action log, so the position count
+     * has to match the game that was played: five moves plus the opening.
+     */
+    const scrubber = host.getByLabel('Move', { exact: true });
+    await expect(scrubber).toHaveValue('5');
+    await expect(host.locator('.log-head')).toContainText('5 / 5');
+    // Opens at the end, which is the finished board.
+    await expect(host.locator('.ttt-cell').nth(2)).toHaveText('X');
+
+    // Stepping back really changes the board rather than only the caption.
+    await host.getByRole('button', { name: 'First move' }).click();
+    await expect(scrubber).toHaveValue('0');
+    await expect(host.locator('.replay-caption')).toContainText('Opening position');
+    await expect(host.locator('.ttt-cell').nth(0)).toHaveText('');
+
+    await host.getByRole('button', { name: 'Next move' }).click();
+    await expect(scrubber).toHaveValue('1');
+    await expect(host.locator('.ttt-cell').nth(0)).toHaveText('X');
+    await expect(host.locator('.ttt-cell').nth(3)).toHaveText('');
+
+    // Arrow keys, because stepping is the whole interaction.
+    await host.keyboard.press('ArrowRight');
+    await expect(scrubber).toHaveValue('2');
+    await expect(host.locator('.ttt-cell').nth(3)).toHaveText('O');
+    await host.keyboard.press('ArrowLeft');
+    await expect(scrubber).toHaveValue('1');
+
+    // Clicking a move in the list jumps to it.
+    await host.locator('.replay-jump').first().click();
+    await expect(scrubber).toHaveValue('5');
+
+    // Seen from the other side of the table.
+    await host.getByRole('button', { name: 'Ben' }).click();
+    await expect(host.locator('.ttt-cell').nth(2)).toHaveText('X');
+
+    /*
+     * Read-only, and it has to be said out loud. Boards work out whose turn it is from the view
+     * rather than from `actors`, so mid-replay it is somebody's turn as far as the board knows --
+     * without an explicit flag every square would invite a click that goes nowhere.
+     */
+    await host.getByRole('button', { name: 'Previous move' }).click();
+    await expect(host.locator('.ttt-cell:not([disabled])')).toHaveCount(0);
+    await expect(host.locator('.ttt')).toContainText('was next');
+
+    // Tic-tac-toe ships no describer of its own, so the move list falls back to the platform's
+    // wording. It used to render a column of dashes.
+    await expect(host.locator('.replay-jump').first()).toContainText('played');
+
+    // No socket is opened for a replay, so the opponent is not told anyone arrived.
+    await expect(guest.locator('.players li')).toHaveCount(2);
+    expect(problemsOf(host)).toEqual([]);
+
+    await host.close();
+    await guest.close();
+  });
+
+  test('says so plainly when there is no replay to show', async ({ browser }) => {
+    const page = await openPlayer(browser, 'Ann');
+    await page.goto('/r/ZZZZZZ');
+    await expect(page.getByRole('heading', { name: 'Nothing to replay' })).toBeVisible();
+    await expect(page.locator('.error')).toContainText(/no finished match/i);
+    await page.close();
   });
 });
 
@@ -986,7 +1214,21 @@ test.describe('the board fits without scrolling', () => {
       if (guide.present) {
         expect(guide.reachable, 'the end of the turn guide cannot be scrolled to').toBe(true);
         // Still has to be worth calling a panel: a box shorter than a line of text is not.
-        expect(guide.viewport, 'the turn guide is too short to read').toBeGreaterThan(24);
+        const sidebar = await host!.evaluate(() => {
+          const side = document.querySelector('.sidebar')!;
+          return {
+            height: Math.round(side.getBoundingClientRect().height),
+            scroll: side.scrollHeight - side.clientHeight,
+            panels: [...side.children].map(
+              (el) => `${el.className.trim().split(' ').pop()}:${Math.round(el.getBoundingClientRect().height)}`,
+            ),
+          };
+        });
+        expect(
+          guide.viewport,
+          `the turn guide is too short to read (list ${guide.viewport}px). Sidebar ${sidebar.height}px, ` +
+            `overflowing by ${sidebar.scroll}px: ${sidebar.panels.join(' ')}`,
+        ).toBeGreaterThan(24);
       }
 
       await host!.close();

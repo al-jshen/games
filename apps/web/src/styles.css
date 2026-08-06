@@ -224,6 +224,74 @@ input:focus {
   flex-direction: column;
   gap: 8px;
 }
+.seat-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 6px;
+}
+.seat-link {
+  width: 100%;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  padding: 4px 6px;
+}
+
+/* ---------------------------------------------------------------- replay viewer */
+
+.replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.replay-bar input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.replay-caption {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Each log line is a jump target, so it has to look and behave like a control, not like text. */
+.replay-jump {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.replay-jump:hover {
+  border-color: var(--line);
+}
+.replay-jump.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+/* An anchor that has to sit in a row of buttons without looking like the odd one out. */
+.button-like {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .resume-row {
   display: flex;
   align-items: center;

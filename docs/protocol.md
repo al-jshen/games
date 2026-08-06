@@ -199,6 +199,20 @@ the Python SDK gives up after 12 consecutive ones instead of spinning forever.
 { "t": "legal", "version": 7, "actions": [ ... ], "truncated": false }
 ```
 
+### `rematch`
+```json
+{ "t": "rematch", "code": "K8DKNG", "matchId": "…", "gameId": "splendor-duel",
+  "seat": 1, "sessionToken": "…", "by": 0 }
+```
+Sent to each player of a finished match, each with **their own seat and token** for the new one, so
+nobody has to copy a code. Sides are swapped: going first is worth something, and a rematch where the
+same player keeps the advantage is not much of one. Store the token, then navigate — the new match is
+entered exactly like any other resume.
+
+Requires both players connected, because a seat is only useful with the token that proves it and
+there is nowhere to deliver one to somebody who has gone. Otherwise
+`error{code:"ILLEGAL_ACTION"}`; creating a fresh match and sharing the code still works.
+
 ### `chat` (server)
 ```json
 { "t": "chat", "message": { "id": 7, "seat": 0, "name": "Ada", "at": 1785704509297, "text": "your move" } }
@@ -300,6 +314,8 @@ Enough for `curl`, a health check, and fetching replays. Everything else is on t
 | `GET` | `/api/matches` | recent matches, newest first (`?limit=50`). Summaries only — never a seed. |
 | `GET` | `/api/matches/:code` | public room info, for prefetching before connecting. `410` once closed. |
 | `POST` | `/api/matches/:code/close` | `{sessionToken}` → end the match. Seat token required. |
+| `POST` | `/api/matches/:code/transfer` | `{sessionToken}` → `{transferToken, expiresAt}`, to carry a seat to another device |
+| `POST` | `/api/matches/:code/claim` | `{transferToken}` → `{sessionToken, seat, gameId}` |
 | `GET` | `/api/matches/:code/replay` | full record of a **finished** match |
 
 Creating over HTTP means the code exists before any socket opens, so you can make a match with
@@ -337,6 +353,28 @@ it" from "existed, and is over" and drop its stored seat accordingly.
 It is deliberately unilateral, unlike undo. Undo changes a position both players are still competing
 over, so it needs consent; closing ends a game one of them no longer wants to play, and requiring
 the other to agree would mean an abandoned match could never be cleared.
+
+## Carrying a seat to another device
+
+A seat is a token in one browser's storage, which is why the resumable list only ever knows about that
+browser. Two steps get it onto a second device:
+
+1. `POST /api/matches/:code/transfer` with the session token → a **short-lived** transfer token
+   (10 minutes) and its expiry.
+2. The link is `/g/CODE#seat=<transferToken>`. The receiving page `POST`s it to
+   `/api/matches/:code/claim` and gets an ordinary session token back, which it keeps.
+
+Three deliberate details:
+
+- **The token rides in the URL fragment**, which browsers never send to a server — so it stays out of
+  access logs, proxy logs and `Referer` headers, the same reason the socket takes its token in a frame
+  rather than a query string. The page strips it after redeeming, so a reload cannot re-spend it and
+  the credential does not sit in the address bar.
+- **A transfer token cannot be used to play, and cannot mint another.** It is marked `kind:"transfer"`
+  and refused by `hello` and by `/transfer`. Without that the ten-minute window would be decoration:
+  anyone who saw the message would have a permanent way in.
+- **The seat is copied, not moved.** Both devices keep working — multiple sockets per seat is already
+  how a second tab behaves, and laptop-then-phone-then-laptop is the point.
 
 ## Resuming a match
 

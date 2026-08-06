@@ -5,8 +5,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { MatchRecord } from '@games/engine';
 import { ErrorCodes, normalizeCode } from '@games/protocol';
 import { gameCatalog } from './registry.js';
-import type { RoomRegistry } from './rooms.js';
-import { verifyToken } from './sessions.js';
+import { claimHoldsSeat, type RoomRegistry } from './rooms.js';
+import { TRANSFER_TTL_MS, mintToken, mintTransferToken, verifyToken } from './sessions.js';
 import type { ReplayStore } from './replay-store.js';
 
 /**
@@ -175,6 +175,96 @@ export function createRequestHandler(deps: HttpDeps) {
       }
 
       /*
+       * Carrying a seat to another device. Two steps on purpose.
+       *
+       * `/transfer` turns the session token this browser holds into a short-lived one, and that is
+       * what goes in the link. `/claim` exchanges it for an ordinary session token, which is what the
+       * receiving device keeps. The link therefore stops working within minutes while the device that
+       * used it carries on, which matters because the link travels through a clipboard and very
+       * probably a chat app.
+       *
+       * Both devices end up working. The seat is copied, not moved: multiple sockets per seat is
+       * already how a second tab behaves, and playing on a laptop then a phone then back again is the
+       * whole point.
+       */
+      const transferMatch = /^\/api\/matches\/([^/]+)\/transfer$/.exec(path);
+      if (transferMatch && req.method === 'POST') {
+        const code = normalizeCode(transferMatch[1] ?? '');
+        let body: { sessionToken?: string };
+        try {
+          body = (await readJsonBody(req)) as { sessionToken?: string };
+        } catch (err) {
+          json(res, 400, { code: ErrorCodes.BAD_FRAME, message: (err as Error).message });
+          return;
+        }
+        const claim = body.sessionToken ? verifyToken(deps.secret, body.sessionToken) : null;
+        // A transfer token cannot mint another: one hop only, or the ten-minute window means nothing.
+        if (!claim || claim.kind === 'transfer') {
+          json(res, 401, { code: ErrorCodes.BAD_SESSION, message: 'A valid session token is required.' });
+          return;
+        }
+        const record = await deps.rooms.recordForCode(code);
+        if (!record || record.closedAt !== undefined) {
+          json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: `No match with code ${code}` });
+          return;
+        }
+        if (!claimHoldsSeat(record, claim)) {
+          json(res, 403, { code: ErrorCodes.BAD_SESSION, message: 'You do not hold a seat in that match.' });
+          return;
+        }
+        const now = Date.now();
+        json(res, 200, {
+          code,
+          transferToken: mintTransferToken(deps.secret, claim, now),
+          expiresAt: now + TRANSFER_TTL_MS,
+        });
+        return;
+      }
+
+      const claimMatch = /^\/api\/matches\/([^/]+)\/claim$/.exec(path);
+      if (claimMatch && req.method === 'POST') {
+        const code = normalizeCode(claimMatch[1] ?? '');
+        let body: { transferToken?: string };
+        try {
+          body = (await readJsonBody(req)) as { transferToken?: string };
+        } catch (err) {
+          json(res, 400, { code: ErrorCodes.BAD_FRAME, message: (err as Error).message });
+          return;
+        }
+        const claim = body.transferToken ? verifyToken(deps.secret, body.transferToken) : null;
+        // Only a transfer token is redeemable, and `verifyToken` has already rejected an expired one.
+        if (!claim || claim.kind !== 'transfer') {
+          json(res, 401, {
+            code: ErrorCodes.BAD_SESSION,
+            message: 'That transfer link is not valid, or has expired.',
+          });
+          return;
+        }
+        const record = await deps.rooms.recordForCode(code);
+        if (!record || record.closedAt !== undefined) {
+          json(res, 404, { code: ErrorCodes.NO_SUCH_MATCH, message: `No match with code ${code}` });
+          return;
+        }
+        if (!claimHoldsSeat(record, claim)) {
+          json(res, 403, { code: ErrorCodes.BAD_SESSION, message: 'That seat is not in this match.' });
+          return;
+        }
+        json(res, 200, {
+          code,
+          seat: claim.seat,
+          gameId: record.gameId,
+          // An ordinary session token: no `kind`, no expiry. This device is now seated like any other.
+          sessionToken: mintToken(deps.secret, {
+            matchId: claim.matchId,
+            seat: claim.seat,
+            playerId: claim.playerId,
+            iat: Date.now(),
+          }),
+        });
+        return;
+      }
+
+      /*
        * Called from the lobby, which holds a seat token but no socket to the room, so this is HTTP
        * rather than a frame. The token is what authorises it: a room code alone must not be enough
        * to end somebody else's game.
@@ -277,12 +367,17 @@ export function createRequestHandler(deps: HttpDeps) {
         }
         /*
          * The seed is what makes a replay reproducible, and a finished match has nothing left to
-         * protect. Two fields are different in kind and stay behind: seat identities, because they
-         * are what session tokens are checked against, and the chat, because two people talking to
-         * each other did not agree to publish it to anyone holding the room code.
+         * protect. Two things are different in kind. `playerId` is what a session token is checked
+         * against, so it never leaves — but the *names* beside it are not secret, both players saw
+         * them all game, and a replay that says "Player 1 vs Player 2" is worse for no gain. And the
+         * chat stays behind entirely: two people talking to each other did not agree to publish it
+         * to anyone holding the room code.
          */
-        const { players: _players, chat: _chat, ...shareable } = record;
-        json(res, 200, shareable);
+        const { players, chat: _chat, ...rest } = record;
+        json(res, 200, {
+          ...rest,
+          ...(players ? { players: players.map((p) => ({ seat: p.seat, name: p.name })) } : {}),
+        });
         return;
       }
 

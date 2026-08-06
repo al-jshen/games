@@ -80,6 +80,17 @@ Two mistakes worth avoiding, both of which Splendor Duel demonstrates:
 
 Preserve array **lengths** when masking identities — emit a placeholder, never a shorter array.
 
+Honour `readOnly` in your board's props. It means "show this position, offer nothing", and the replay
+viewer sets it. It has to be its own flag rather than inferred from an empty `actors`, because boards
+derive whose turn it is from the *view* — deliberately, so an optimistic move renders consistently —
+and mid-replay it is genuinely somebody's turn as far as the board can tell. Without it every
+affordance lights up for a move that cannot be submitted.
+
+You also get a replay viewer for free, for the same reason you get undo: a match is a seed plus an
+action log, so the browser rebuilds every position through your own reducer. Exporting
+`describeEffect` is what makes it readable — without one the move list falls back to the platform's
+generic wording.
+
 You get undo for free, and should not implement one. A match is its seed plus its action log, so the
 platform takes a move back by dropping the last entry and replaying through *your* reducer — which
 means the result is always a position your own rules produced. The only thing a game contributes is

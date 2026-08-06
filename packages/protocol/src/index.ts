@@ -149,6 +149,11 @@ export const zClientFrame = z.discriminatedUnion('t', [
    * `accept: false` to withdraw their own request.
    */
   z.object({ t: z.literal('undoRespond'), accept: z.boolean() }),
+  /**
+   * Play again, same game and same two people. Needs both of them connected, since the reply carries
+   * each a seat token for the new match.
+   */
+  z.object({ t: z.literal('rematch') }),
   /** Request a fresh snapshot, e.g. after a suspected desync. */
   z.object({ t: z.literal('resync') }),
   /**
@@ -238,6 +243,17 @@ export const zServerFrame = z.discriminatedUnion('t', [
     /** Who settled it: the responder, the proposer withdrawing, or absent if it lapsed. */
     by: z.number().int().optional(),
     reason: z.string().optional(),
+  }),
+  z.object({
+    t: z.literal('rematch'),
+    /** The new match. Each recipient gets their own seat and token, so nobody has to share a code. */
+    code: z.string(),
+    matchId: z.string(),
+    gameId: z.string(),
+    seat: z.number().int(),
+    sessionToken: z.string(),
+    /** Who asked for it. */
+    by: z.number().int(),
   }),
   z.object({ t: z.literal('chat'), message: zChatMessage }),
   z.object({ t: z.literal('presence'), players: z.array(zPlayerInfo) }),

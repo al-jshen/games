@@ -599,10 +599,15 @@ describe('what the match endpoints will tell you', () => {
     // The seed is fine now: there is nothing left to predict.
     expect(body.seed).toBeTruthy();
     expect(body.actions).toHaveLength(5);
-    // A playerId is what a session token is checked against, so it stays in the server.
-    expect(body.players).toBeUndefined();
+    /*
+     * Names come through: both players looked at them all game, and a replay captioned "Player 1 vs
+     * Player 2" is worse for nothing gained. The playerId does not, because that is the thing a
+     * session token is checked against.
+     */
     const record = (await store().findByCode(code))!;
+    expect(body.players?.map((p) => p.name)).toEqual(['Ada', 'Grace']);
     expect(JSON.stringify(body)).not.toContain(record.players![0]!.playerId);
+    expect(JSON.stringify(body)).not.toContain('playerId');
 
     host.close();
     guest.close();
