@@ -1,0 +1,14 @@
+{
+  "name": "@games/tool-selfplay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node selfplay.mjs"
+  },
+  "dependencies": {
+    "@games/bot-ismcts": "*",
+    "@games/engine": "*",
+    "@games/splendor-duel": "*"
+  }
+}

@@ -11,13 +11,14 @@
     "packages/engine",
     "packages/games/*",
     "packages/client-sdk",
+    "packages/bot-ismcts",
     "apps/server",
     "apps/web",
     "tools/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc -b packages/engine packages/protocol packages/client-sdk packages/games/tic-tac-toe packages/games/splendor-duel apps/server && tsc -p packages/games/splendor-duel/tsconfig.ui.json && tsc -p packages/games/tic-tac-toe/tsconfig.ui.json",
+    "typecheck": "tsc -b packages/engine packages/protocol packages/client-sdk packages/games/tic-tac-toe packages/games/splendor-duel packages/bot-ismcts apps/server && tsc -p packages/games/splendor-duel/tsconfig.ui.json && tsc -p packages/games/tic-tac-toe/tsconfig.ui.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node scripts/dev.mjs",
@@ -27,7 +28,8 @@
     "lint": "eslint .",
     "clean": "rm -rf packages/*/dist packages/games/*/dist apps/*/dist tools/*/dist apps/web/dist *.tsbuildinfo",
     "test:e2e": "playwright test",
-    "bench": "npm run -w @games/tool-bench start"
+    "bench": "npm run -w @games/tool-bench start",
+    "selfplay": "npm run -w @games/tool-selfplay start --"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

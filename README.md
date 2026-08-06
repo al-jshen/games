@@ -21,6 +21,7 @@ npm run dev          # http://localhost:5173
 Open two browser windows, create a match in one, paste the code in the other.
 
 ```bash
+npm run selfplay     # ISMCTS bot playing itself, and whether each search option earns its place
 npm test             # rules invariants, redaction, replay, wire schema, live sockets, SSR renders
 npm run test:e2e     # real headless browser, two players, a full game
 npm run typecheck
@@ -171,6 +172,25 @@ after seeing what it revealed is a way to cheat, so the player who would be affe
 has to say yes. The rewind is a replay of the action log minus its last entry, which is why it lives
 in the platform and not in any one game — and why it cannot produce a position the rules could not
 have reached. It also un-ends a match whose final move is taken back.
+
+## Playing against a search
+
+`packages/bot-ismcts` is an Information Set MCTS bot, game-agnostic: it needs a `GameModule`, a way to
+sample a world consistent with a player's view, and a position evaluation. Splendor Duel supplies the
+last two as `determinize` and `evaluate`.
+
+Determinizing is unusually well-behaved in this game. The only hidden cards are ones the opponent drew
+blind off a deck, so they did not choose them either and there is no selection effect to model —
+conditioned on what is public, every unseen card of that level is equally likely. The sampling is
+genuinely unbiased rather than a convenient approximation, and the round trip is tested: redacting a
+sampled world has to return the exact view it came from, byte for byte.
+
+The search is verified against tic-tac-toe, where the answers are known — it must never lose, and must
+agree with an exact solver. Splendor Duel cannot tell you whether a search is correct; a broken one
+still beats a random bot.
+
+`npm run selfplay` runs the bot against itself and A/B tests each search option against the same
+configuration with it switched off, because none of them is obviously worth its cost.
 
 ## Splendor Duel specifics
 

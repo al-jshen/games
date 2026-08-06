@@ -70,4 +70,6 @@ export { redactFor, redactEffect, secretsFor } from './redact.js';
 export { setup } from './setup.js';
 export { apply } from './apply.js';
 export { applyToView, legalActionsFromView } from './predict.js';
+export { determinize } from './determinize.js';
+export { evaluate, raceProgress, rolloutPreference, DEFAULT_WEIGHTS, type EvalWeights } from './evaluate.js';
 export { zSplendorAction, zSplendorOptions } from './schema.js';
