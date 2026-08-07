@@ -100,6 +100,29 @@ export interface SearchConfig {
    *
    * Under `ucb1` the policy network is never consulted, and `deps.priors` may be absent. That is the
    * point of the toggle: one search, one measurement at a time.
+   *
+   * **Measured, and `puct` currently loses badly.** Against the same search with `ucb1`, both using
+   * the same value network at the leaf: 30-90 over 120 games with priors at the root, and 4-16 over
+   * 20 at full depth. On move agreement with a 3000-iteration reference across 150 positions, `ucb1`
+   * scores 44% and `puct` 33-39% at every exploration constant from 1.5 to 16.
+   *
+   * The reason is not tuning, and it is worth understanding before trying again. PUCT trades
+   * exploration for prior-guidance, and there is no prior-guidance here to gain: gen-0's policy head
+   * produces priors with an effective support of 47.7 out of 48 legal moves, which is uniform to
+   * within a rounding error. Meanwhile the trade costs real exploration -- at a child with ten
+   * visits, UCB1's bonus is ~1.06 against PUCT's ~0.05 on the same [0, 1] value scale, a twentyfold
+   * difference in how fast the search stops questioning itself.
+   *
+   * And this search needs that questioning more than AlphaZero's does. Every iteration re-determinizes,
+   * so the same node returns a different value depending on which world was drawn: a 3000-iteration
+   * search agrees with *itself* on only 74% of positions across reseeds. UCB1's oversized exploration
+   * term is insurance against that variance, and PUCT cashes it in for a prior that says nothing.
+   *
+   * Which points at the order of operations rather than at abandoning it. `pi` is flat in exactly the
+   * high-branching positions where a prior would earn its keep, because the search that produced the
+   * targets did not concentrate there either -- 5.3% on the favourite at 300 iterations, 28.2% at
+   * 1232. Deeper search sharpens the targets, sharper targets train a policy head worth consulting,
+   * and then this becomes worth re-running.
    */
   selection: 'ucb1' | 'puct';
   /**
