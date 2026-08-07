@@ -5,8 +5,8 @@ downstream -- a policy head, PUCT, the self-play loop -- rests on a network bein
 position from these features. If it cannot beat a hundred lines of heuristic at that, the features
 are wrong and the loop would be built on sand.
 
-Deliberately small: an MLP, a few minutes on CPU, no tuning. The bar is not "good", it is "better
-than what we already have", and it is measured on games the network never saw.
+Deliberately small: an MLP, minutes rather than hours, no tuning. The bar is not "good", it is
+"better than what we already have", and it is measured on games the network never saw.
 
 It also sweeps the *value target*. The obvious target is the game's outcome, but every position in a
 game carries the same one, so a hundred rows share a single bit and the effective sample size is the
@@ -20,7 +20,9 @@ blunder flips Z for every position in the game. Whether it helps *here* is measu
 
 from __future__ import annotations
 
+import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,22 @@ from read_dataset import load  # noqa: E402
 
 torch.manual_seed(7)
 np.random.seed(7)
+
+
+def pick_device(requested: str | None) -> torch.device:
+    """Where the sweep runs, and what a GPU is actually worth here.
+
+    Not FLOPs. These models are small enough that a step costs more in launching kernels than in
+    arithmetic -- on 96 CPU cores the larger net and the tiny one ran at the same speed, which is the
+    signature of overhead rather than work. What a GPU buys is that all 6.6GB of the split fits in
+    its memory, so every batch is gathered where the weights already are.
+
+    Which is also why the batch size matters more here than it would on a machine doing real work per
+    step: at 256 almost all of the wall clock is overhead that a larger batch simply deletes.
+    """
+    if requested:
+        return torch.device(requested)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def split_by_game(data, holdout=0.2):
@@ -68,17 +86,17 @@ def make_model(features: int, kind: str) -> nn.Module:
     )
 
 
-def report(name: str, pred: np.ndarray, z: np.ndarray) -> dict:
+def report(name: str, pred: np.ndarray, z: np.ndarray, note: str = "") -> dict:
     mse = float(np.mean((pred - z) ** 2))
     # Sign agreement is the number that matters for a search: does it know who is winning?
     decided = z != 0
     accuracy = float(np.mean(np.sign(pred[decided]) == np.sign(z[decided]))) if decided.any() else float("nan")
     corr = float(np.corrcoef(pred, z)[0, 1]) if np.std(pred) > 0 else float("nan")
-    print(f"  {name:<22} mse {mse:.4f}   sign {accuracy:6.1%}   corr {corr:+.3f}")
+    print(f"  {name:<22} mse {mse:.4f}   sign {accuracy:6.1%}   corr {corr:+.3f}{note}", flush=True)
     return {"mse": mse, "accuracy": accuracy, "corr": corr}
 
 
-def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4):
+def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batch=8192, lr=1e-3):
     """Train, and keep the parameters from the best held-out epoch rather than the last.
 
     Without early stopping this measures how thoroughly a model can memorise 300 games, which is not
@@ -87,17 +105,34 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4):
     `target_train` is what the model is fitted to and may be a blend; `z_test` is the real outcome
     and is what it is early-stopped and scored on. Those must not be the same quantity, or a blend
     would be judged by how well it reproduces itself.
+
+    The default was 256 until it was measured. A larger batch at a fixed epoch count is fewer
+    parameter updates, not merely bigger ones -- 8192 is 8,900 where 256 is 284,800 -- so the
+    expectation was that it would underfit, and the expectation was wrong. Sweeping 256 / 1024 / 4096
+    / 16384 on the linear model moved held-out MSE only between 0.8351 and 0.8371, a spread far
+    inside the noise of which games land in the holdout, while the run went from 197s to 3s. Scaling
+    the learning rate with the batch, the usual remedy, was tried in the same sweep and helped
+    nowhere: Adam already normalises by gradient scale, so `lr` stays at 1e-3.
+
+    Then the whole 12-config sweep was run at both 256 and 4096, and the linear row agreed to within
+    0.0018 with lambda=1 identical to four decimals -- so this is a free speedup rather than a
+    different experiment.
     """
-    model = make_model(x_train.shape[1], kind)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=decay)
+    device = x_train.device
+    model = make_model(x_train.shape[1], kind).to(device)
+    # `fused` on CUDA for the same reason the device was chosen: a step here is launch-bound, and the
+    # fused optimiser collapses a per-parameter kernel each into one. Same Adam, same update.
+    opt = torch.optim.Adam(
+        model.parameters(), lr=lr, weight_decay=decay, fused=device.type == "cuda"
+    )
     loss_fn = nn.MSELoss()
     best, best_state, best_epoch = float("inf"), None, 0
 
     for epoch in range(epochs):
         model.train()
-        order = torch.randperm(len(x_train))
-        for i in range(0, len(order), 256):
-            idx = order[i : i + 256]
+        order = torch.randperm(len(x_train), device=device)
+        for i in range(0, len(order), batch):
+            idx = order[i : i + batch]
             opt.zero_grad()
             loss_fn(model(x_train[idx]).squeeze(-1), target_train[idx]).backward()
             opt.step()
@@ -111,21 +146,44 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4):
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        return model(x_test).squeeze(-1).numpy(), best_epoch
+        return model(x_test).squeeze(-1).cpu().numpy(), best_epoch
 
 
-def main(directory: str) -> int:
+def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40) -> int:
     data = load(directory)
     train_mask, test_mask = split_by_game(data)
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
-    print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game\n")
+    print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game")
 
-    x_train = torch.from_numpy(data.x[train_mask])
-    z_train = torch.from_numpy(data.z[train_mask])
-    q_train = torch.from_numpy(data.q[train_mask])
-    x_test = torch.from_numpy(data.x[test_mask])
-    z_test_t = torch.from_numpy(data.z[test_mask])
+    device = pick_device(device_name)
+
+    def resident(*arrays):
+        """Move a split onto the device once and leave it there for the whole sweep.
+
+        Copying batches across as they are needed would spend more time on the bus than on the
+        arithmetic, since the step that consumes a batch takes microseconds.
+
+        The fallback exists because the amount that has to fit scales with the dataset and the
+        dataset is the thing we keep growing. Falling back is much better than discovering at 25,000
+        games that the sweep no longer starts.
+        """
+        nonlocal device
+        try:
+            return [torch.from_numpy(a).to(device) for a in arrays]
+        except torch.cuda.OutOfMemoryError:
+            need = sum(a.nbytes for a in arrays) / 1e9
+            print(f"  {device} cannot hold {need:.1f} GB of split -- falling back to CPU")
+            device = torch.device("cpu")
+            torch.cuda.empty_cache()
+            return [torch.from_numpy(a) for a in arrays]
+
     z_test = data.z[test_mask]
+    x_train, z_train, q_train, x_test, z_test_t = resident(
+        data.x[train_mask], data.z[train_mask], data.q[train_mask], data.x[test_mask], z_test
+    )
+    # From the shapes, not by re-indexing: `data.x[mask]` is a 5GB copy and it has been made already.
+    gb = data.x.shape[0] * data.x.shape[1] * 4 / 1e9
+    print(f"  training on {device}, {gb:.1f} GB of features resident, batch {batch}, {epochs} epochs\n")
 
     games = len(np.unique(data.meta[train_mask, 0]))
     print(f"  {games} training games. Every position in one shares a single outcome, so against a")
@@ -157,8 +215,12 @@ def main(directory: str) -> int:
     for kind in ("linear", "tiny", "mlp"):
         for lam in lambdas:
             target = (1 - lam) * z_train + lam * q_train
-            pred, epoch = fit(kind, x_train, target, x_test, z_test_t)
-            results[(kind, lam)] = report(f"learned ({kind}, l={lam:g})", pred, z_test)
+            started = time.monotonic()
+            pred, epoch = fit(kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch)
+            # The epoch is worth seeing next to the score: a best epoch equal to the budget means the
+            # run was still improving when it ran out, and the number below is a floor, not a result.
+            note = f"   (epoch {epoch}/{epochs}, {time.monotonic() - started:.0f}s)"
+            results[(kind, lam)] = report(f"learned ({kind}, l={lam:g})", pred, z_test, note)
             results[(kind, lam)]["epoch"] = epoch
         print()
 
@@ -184,30 +246,51 @@ def main(directory: str) -> int:
 
     gain = (heuristic["mse"] - best["mse"]) / heuristic["mse"]
     beats = best["mse"] < heuristic["mse"] and best["accuracy"] > heuristic["accuracy"]
+    # Whether more parameters help, at each one's own best target. This is the diagnostic the linear
+    # model is in the sweep for, and it is computed rather than asserted -- it was true at 1,200
+    # games and false at 25,000, and a sentence that hardcodes either will eventually be a lie.
+    flat = min(results[("linear", l)]["mse"] for l in lambdas)
+    deep = min(results[("mlp", l)]["mse"] for l in lambdas)
+    capacity_hurts = flat < deep
+
     # A margin, not merely a win. Crossing over by one percent is inside the noise of which games
     # landed in the held-out split, and calling that a success is how a project talks itself into
     # building on a result that is not there.
     if beats and gain > 0.05:
-        print(f"  The learned value wins ({best_kind}): {gain:.0%} lower error, better sign agreement.")
+        print(f"  The learned value wins ({best_kind}): {gain:.1%} lower error, better sign agreement.")
         print("  The features carry signal. A value head is worth building on.")
-        return 0
-    if beats:
-        print(f"  The learned value edges ahead ({best_kind}) by {gain:.0%}, which is inside the noise.")
-        print("  Signal, but not yet a result. And capacity still hurts, so it is still data-bound:")
-        print("  more games is the lever, not a different encoder.")
-        return 1
-
-    # Which way it failed matters, and the two call for opposite responses.
-    if min(results[("linear", l)]["mse"] for l in lambdas) < min(results[("mlp", l)]["mse"] for l in lambdas):
+    elif beats:
+        print(f"  The learned value edges ahead ({best_kind}) by {gain:.1%}, which is inside the noise.")
+        print("  Signal, but not yet a result.")
+    elif capacity_hurts:
+        # Which way it failed matters, and the two call for opposite responses.
         print("  No model beats the heuristic yet, but the *linear* model beats the larger ones —")
         print("  the classic signature of too little data rather than bad features. With one label")
         print(f"  per game, {games} games is not enough to fit anything with capacity.")
         print("  Generate more games before touching the encoder.")
+        return 1
     else:
         print("  No model beats the heuristic, and capacity is not the constraint.")
         print("  Suspect the features. Fix them before building the loop on top.")
-    return 1
+        return 1
+
+    # Said either way, because it is the reading that decides what to do next and it is easy to carry
+    # a stale answer forward. Capacity hurting means the lever is more games; capacity helping means
+    # the data has caught up with the model and a bigger one is finally worth trying.
+    if capacity_hurts:
+        print(f"  Capacity still hurts -- linear {flat:.4f} against mlp {deep:.4f} -- so it remains")
+        print("  data-bound: more games is the lever, not a different encoder.")
+    else:
+        print(f"  And capacity now helps -- mlp {deep:.4f} against linear {flat:.4f}, which reverses")
+        print(f"  the reading at smaller sizes. {games:,} games is enough to fit parameters with.")
+    return 0 if (beats and gain > 0.05) else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else ".data/gen0"))
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("directory", nargs="?", default=".data/gen0", help="a self-play dataset")
+    parser.add_argument("--device", help="cuda, cpu, ... (default: cuda when one is present)")
+    parser.add_argument("--batch", type=int, default=8192, help="see fit() -- it was measured")
+    parser.add_argument("--epochs", type=int, default=40)
+    args = parser.parse_args()
+    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs))
