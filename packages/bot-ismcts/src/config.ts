@@ -127,9 +127,14 @@ export interface SearchConfig {
    * information does. The second and third are probably true in general. Neither was the cause, and
    * the first was simply wrong -- the priors are 1.5 to 3x uniform on their top slot.
    *
-   * After the fix, on move agreement with a 3000-iteration reference over 150 positions: `ucb1` 44%,
-   * `puct` 47-53% depending on the constant, best around c=4. That is a proxy and the intervals
-   * overlap, so it says "worth playing games over", not "better".
+   * After the fix, the same matchup at the same 300 iterations with the same networks: **172-108
+   * over 280 games, 61.4% [55.6%, 66.9%], about +81 elo [39, 122]**. It had been 30-90. A ~270 elo
+   * swing out of one line, which is worth stating plainly because the three explanations written for
+   * the loss were all plausible, none of them was the cause, and one of them was flatly wrong.
+   *
+   * The cheaper proxy agreed and would have been enough to justify the games: move agreement with a
+   * 3000-iteration reference over 150 positions went from 33-39% at every constant to 44% for `ucb1`
+   * against 47-53% for `puct`, best around c=4.
    *
    * Two things remain true regardless. `pi` is flat in the high-branching positions where a prior
    * would earn its keep, because the search that produced those targets did not concentrate there
