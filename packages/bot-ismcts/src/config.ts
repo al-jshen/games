@@ -81,22 +81,29 @@ export interface SearchConfig {
    * are *unbounded*, and says so of the case we are actually in: "In two-player zero sum games the
    * value functions are assumed to be bounded within the [0,1] interval."
    *
-   * **Off by default, on the principle that it is not what anyone else does.** AlphaZero and Leela
-   * both keep a fixed [-1, 1] scale and tune the exploration constant against it; the only engine
-   * that min-max rescales is doing it for unbounded values and declines it for board games. The
-   * evidence for turning it on here was a twenty-game A/B, and twenty games resolves nothing -- the
-   * arena puts 120 games at plus or minus 62 elo.
+   * **On by default, and it was briefly turned off on principle -- which cost 207-13.** AlphaZero and
+   * Leela both keep a fixed [-1, 1] scale rather than min-max rescaling, and the one engine that does
+   * rescale is fixing unbounded values and declines it for board games. That argument is sound and it
+   * is not sufficient, because they also tune their exploration constants *for* a fixed scale and we
+   * had tuned ours for a rescaled one.
    *
-   * Two costs, beyond the departure from precedent. It amplifies noise along with signal: this
-   * network reports root positions in a band 0.14 wide, so filling [0, 1] multiplies everything by
-   * about seven, and a 3000-iteration search here already disagrees with itself a quarter of the
-   * time. And it destroys any absolute reference -- "Q = 0 is neutral" becomes "zero is wherever it
-   * falls between this node's siblings", which is what made PUCT's unvisited children unreachable.
+   * Measured, both sides PUCT at c=4 and 300 iterations, rescaling the only difference: 207-13 over
+   * 220 games, about +470 elo for having it on. Not a tuning gap -- a broken search. Without
+   * rescaling the values arrive in a band roughly 0.07 wide while the exploration term still assumes
+   * a spread near 1.0, so exploration swamps value and the search is close to random. That is the
+   * failure this option was added to prevent, now with a number attached rather than the twenty-game
+   * A/B it originally rested on.
    *
-   * It is coupled to `exploration`, which was chosen alongside it and has never been tuned either.
-   * Without rescaling the values arrive in roughly [0.50, 0.57], so 1.4 is likely too large now.
-   * If turning this off costs strength, that is the first thing to look at rather than evidence for
-   * rescaling.
+   * Turning it off is still defensible, but it is a *two* variable change: `exploration` and
+   * `puctExploration` both scale with the value range, and at a 0.07-wide band they want to be
+   * roughly an order of magnitude smaller. Nobody has tried that. What is settled is that flipping
+   * this alone does not work.
+   *
+   * The costs are real and remain. It amplifies noise along with signal -- this network reports root
+   * positions in a band 0.14 wide, so filling [0, 1] multiplies everything by about seven, in a
+   * search that already disagrees with itself a quarter of the time. And it destroys any absolute
+   * reference: "Q = 0 is neutral" becomes "zero is wherever it falls among this node's siblings",
+   * which is exactly what made PUCT's unvisited children unreachable.
    */
   normaliseValues: boolean;
 
@@ -177,7 +184,7 @@ export const BASELINE: SearchConfig = {
   fastRollout: false,
   commonRandomNumbers: false,
   worldPool: 32,
-  normaliseValues: false,
+  normaliseValues: true,
   selection: 'ucb1',
   puctExploration: 1.5,
   puctDepth: 99,
