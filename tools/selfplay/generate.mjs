@@ -43,6 +43,26 @@ const OUT = flag('out', '.data/gen0');
  * and the heuristic's influence decays with each generation rather than being re-injected.
  */
 const NET = flag('net', null);
+/*
+ * Sampling the played move in proportion to visit counts, for the opening only.
+ *
+ * Without it a deal is played out one way and one way only, so a generation explores just the lines
+ * the current network already likes and the next one learns from a narrower slice of the game.
+ * AlphaZero samples for the first thirty moves at T=1 and plays greedily after.
+ *
+ * The window is shorter here for two reasons. Their thirty counts plies of a ~90-ply game, while
+ * this counter counts one player's own decisions -- so thirty of ours would be two thirds of the
+ * game rather than a third. And their initial position is *identical* every game, which is the
+ * pressure temperature exists to relieve; ours is a fresh random deal each time, so a good deal of
+ * the diversity is already there. Fifteen is about the same fraction of the game as theirs.
+ *
+ * It is not free. A sampled move is sometimes a worse move, and `z` is the outcome of the game that
+ * actually got played -- so exploration adds noise to the label the value head is already starved
+ * of. AlphaZero could absorb that across 44 million games. Worth watching at 25,000.
+ */
+const TEMPERATURE = Number(flag('temperature', '1.0'));
+const TEMPERATURE_MOVES = Number(flag('temperature-moves', '15'));
+const explore = TEMPERATURE > 0 ? { temperature: TEMPERATURE, moves: TEMPERATURE_MOVES } : null;
 
 const config = { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...(NET ? { leaf: 'evaluate' } : {}) };
 const seeds = Array.from({ length: GAMES }, (_, i) => `gen-${i}`);
@@ -54,8 +74,8 @@ const jobs = seeds.map((seed, game) => ({
   record: true,
   // Both seats searched, so every position is a training row rather than half of them.
   aFirst: game % 2 === 0,
-  a: { kind: 'ismcts', config: { ...config, seed: `a${game}` }, net: NET },
-  b: { kind: 'ismcts', config: { ...config, seed: `b${game}` }, net: NET },
+  a: { kind: 'ismcts', config: { ...config, seed: `a${game}` }, net: NET, explore },
+  b: { kind: 'ismcts', config: { ...config, seed: `b${game}` }, net: NET, explore },
 }));
 
 const duration = (seconds) => {
@@ -66,7 +86,8 @@ const duration = (seconds) => {
 
 console.log(
   `Generating ${GAMES} games at ${ITERATIONS} iterations on ${WORKERS} worker(s), ` +
-    `leaf=${config.leaf}${NET ? ` net=${NET}` : ''}…`,
+    `leaf=${config.leaf}${NET ? ` net=${NET}` : ''}` +
+    `${explore ? `, sampling at T=${TEMPERATURE} for ${TEMPERATURE_MOVES} moves` : ', greedy'}…`,
 );
 const started = Date.now();
 
@@ -78,7 +99,7 @@ const writer = await openDataset(OUT, {
   policyLayout: POLICY_LAYOUT,
   // `net` beside `config` because it is part of what produced these rows. A dataset that does not
   // record which network searched it cannot be placed in the sequence of generations later.
-  config: { ...config, net: NET },
+  config: { ...config, net: NET, explore },
   generatedAt: new Date().toISOString(),
 });
 

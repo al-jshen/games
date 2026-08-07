@@ -65,8 +65,42 @@ export function depsWithNet(path) {
   };
 }
 
-function ismctsPlayer(config, record, netPath) {
+/**
+ * Which move to actually play, given what the search found.
+ *
+ * Greedy on visit counts is right for measuring strength and wrong for generating training data. A
+ * deal played greedily produces exactly one line, so a generation of self-play explores only the
+ * moves the current network already prefers, and the next generation learns from a narrower slice of
+ * the game than the one before it. AlphaZero's answer is to sample proportional to visits for the
+ * opening and play greedily thereafter, and this is that.
+ *
+ * `visits ** (1/T)`: T=1 samples in proportion to visits, T below 1 sharpens toward the favourite,
+ * and T at 0 is greedy. The exponent is applied to visit counts rather than to the search's value
+ * estimates deliberately -- visits are the low-variance statistic, which is the same reason the
+ * greedy choice uses them.
+ *
+ * The recorded policy target is untouched by any of this. `pi` is the visit distribution, which is
+ * what the search concluded; sampling changes only which move gets played out of it.
+ */
+function pickAction(ranking, moveNumber, explore, rng) {
+  if (!explore || explore.temperature <= 0 || moveNumber >= explore.moves) return ranking[0].action;
+  const weights = ranking.map((r) => Math.pow(r.visits, 1 / explore.temperature));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return ranking[0].action;
+  // `RandomCursor` deals in integers, so a uniform float comes from a wide integer draw. 2^30 is
+  // far more resolution than a distribution over ~25 actions can use.
+  let pick = (rng.int(1 << 30) / (1 << 30)) * total;
+  for (let i = 0; i < ranking.length; i++) {
+    pick -= weights[i];
+    if (pick <= 0) return ranking[i].action;
+  }
+  return ranking[ranking.length - 1].action;
+}
+
+function ismctsPlayer(config, record, netPath, explore) {
   const searchDeps = netPath ? depsWithNet(netPath) : deps;
+  // Seeded off the player's own seed, so a generation run stays reproducible move for move.
+  const exploreRng = explore ? new RandomCursor(`explore:${config.seed}`, 0) : null;
   let move = 0;
   const stats = { disagreement: [], noiseFloor: [], valueSpan: [] };
   /*
@@ -114,7 +148,8 @@ function ismctsPlayer(config, record, netPath) {
         stats.disagreement.push(spread.acrossWorlds);
         stats.noiseFloor.push(spread.sameWorld);
       }
-      return result.action;
+      // `move` has already been incremented for the search's seed, so the move just chosen is one back.
+      return pickAction(result.ranking, move - 1, explore, exploreRng);
     },
   };
 }
@@ -133,7 +168,9 @@ function randomPlayer(seed) {
 
 /** Build a player from a plain description, so a whole matchup can cross a worker boundary. */
 export function makePlayer(spec, record = false) {
-  return spec.kind === 'random' ? randomPlayer(spec.seed) : ismctsPlayer(spec.config, record, spec.net);
+  return spec.kind === 'random'
+    ? randomPlayer(spec.seed)
+    : ismctsPlayer(spec.config, record, spec.net, spec.explore);
 }
 
 /**
