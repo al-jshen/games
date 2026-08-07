@@ -258,7 +258,7 @@ function leafValue<S, A, V, O>(
 ): number {
   const { mod, evaluate } = deps;
   if (mod.outcome(state).status === 'over') return terminalValue(mod, state, seat);
-  if (config.leaf === 'heuristic') return evaluate(state, seat);
+  if (config.leaf === 'evaluate') return evaluate(state, seat);
 
   const rolled = rollout(deps, state, seat, config, rng);
   if (config.leaf === 'rollout') return rolled;

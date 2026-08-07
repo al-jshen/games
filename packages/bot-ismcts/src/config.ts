@@ -15,20 +15,26 @@ export interface SearchConfig {
   /**
    * What to do at a freshly expanded leaf.
    *
-   * `heuristic` evaluates immediately: cheapest, so the most iterations per second, but the
-   * evaluation's blind spots become the agent's. `rollout` plays on and uses the outcome: slower and
-   * noisier, but it injects real dynamics the evaluation may not know about. `mixed` blends the two
+   * `evaluate` calls `deps.evaluate` and stops: cheapest, so the most iterations per second, but the
+   * evaluator's blind spots become the agent's. `rollout` plays on and uses the outcome: slower and
+   * noisier, but it injects real dynamics the evaluator may not know about. `mixed` blends the two
    * by `shrinkage`.
+   *
+   * This option was called `heuristic`, which named the wrong thing. The evaluator is a dependency
+   * the caller supplies, and once a value network was passed as `deps.evaluate` the configuration
+   * read `leaf: 'heuristic'` while no heuristic was involved anywhere. These three name a *strategy*
+   * for turning a leaf into a number, not the function that does it -- and that distinction is what
+   * lets a network be dropped in without the search knowing.
    *
    * Worth measuring rather than assuming: random rollouts are famously uninformative in
    * engine-building games, because two random players never build an engine, so whatever advantage
    * one side had never gets to cash out.
    */
-  leaf: 'heuristic' | 'rollout' | 'mixed';
+  leaf: 'evaluate' | 'rollout' | 'mixed';
   /** Plies to roll out before giving up and evaluating. Bounds cost, and bounds non-terminating games. */
   rolloutDepth: number;
   /**
-   * Weight on the heuristic when `leaf` is `mixed`. 0 is pure rollout, 1 is pure heuristic.
+   * Weight on the evaluator when `leaf` is `mixed`. 0 is pure rollout, 1 is pure evaluator.
    *
    * A control variate: trading a little bias for a large drop in variance. The classic answer to
    * "the rollouts are noisy".

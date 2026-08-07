@@ -8,7 +8,7 @@
  * costs more per call, so at a fixed time budget it buys fewer iterations, and a search that is
  * slightly better informed but a third as deep is usually worse. Only playing decides that.
  *
- *   node tools/selfplay/arena.mjs --a '{"leaf":"heuristic"}' --b '{"leaf":"mixed"}'
+ *   node tools/selfplay/arena.mjs --a '{}' --a-net .data/models/value-gen0 --b '{}'
  *   node tools/selfplay/arena.mjs --a '{"iterations":1200}' --b '{}' --pairs 200
  *   node tools/selfplay/arena.mjs --a random --b '{}' --pairs 50
  *
@@ -40,11 +40,18 @@ const LABEL_B = flag('label-b', 'B');
  * JSON patch over the tuned defaults -- so a matchup is written as the difference between the two
  * sides rather than as two full configurations, which is how it is actually thought about.
  */
-function parsePlayer(spec) {
+function parsePlayer(spec, net) {
   if (spec === 'random') return (seed) => ({ kind: 'random', seed });
   const base = spec === 'baseline' ? BASELINE : DEFAULT_CONFIG;
   const overrides = spec === 'baseline' || spec === 'default' ? {} : JSON.parse(spec);
-  return (seed) => ({ kind: 'ismcts', config: { ...base, iterations: ITERATIONS, ...overrides, seed } });
+  /*
+   * A network implies no rollout, unless the caller insists otherwise. The default leaf is `mixed`,
+   * and a network under `mixed` would be called once at the leaf and then up to forty more times
+   * inside the playout -- forty times the cost for a playout the network was meant to replace. It is
+   * a legitimate configuration and it is never the one anybody means, so it has to be asked for.
+   */
+  if (net && overrides.leaf === undefined) overrides.leaf = 'evaluate';
+  return (seed) => ({ kind: 'ismcts', config: { ...base, iterations: ITERATIONS, ...overrides, seed }, net });
 }
 
 /**
@@ -95,14 +102,20 @@ function buildJobs(makeA, makeB) {
   return jobs;
 }
 
-const makeA = parsePlayer(flag('a', 'default'));
-const makeB = parsePlayer(flag('b', 'default'));
+const NET_A = flag('a-net', null);
+const NET_B = flag('b-net', null);
+const makeA = parsePlayer(flag('a', 'default'), NET_A);
+const makeB = parsePlayer(flag('b', 'default'), NET_B);
 const jobs = buildJobs(makeA, makeB);
 
+const describe = (spec, net, make) => {
+  const { config } = make('x');
+  return `${spec}${net ? `  net=${net}` : ''}  leaf=${config.leaf} iterations=${config.iterations}`;
+};
 console.log(`Arena — ${LABEL_A} vs ${LABEL_B}`);
-console.log(`  ${PAIRS} deals played both ways = ${jobs.length} games, ${ITERATIONS} iterations, ${WORKERS} workers`);
-console.log(`  A: ${flag('a', 'default')}`);
-console.log(`  B: ${flag('b', 'default')}\n`);
+console.log(`  ${PAIRS} deals played both ways = ${jobs.length} games, ${WORKERS} workers`);
+console.log(`  A: ${describe(flag('a', 'default'), NET_A, makeA)}`);
+console.log(`  B: ${describe(flag('b', 'default'), NET_B, makeB)}\n`);
 
 let winsA = 0;
 let winsB = 0;

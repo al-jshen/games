@@ -129,7 +129,7 @@ console.log(
  * than assuming. A leaf is only part of an iteration -- there is the descent, the node bookkeeping,
  * `legalActions` at every expansion, and one determinization per iteration -- and none of that gets
  * faster. Timing a whole search with the rollout on and off bounds it from the other side:
- * `leaf: 'heuristic'` has the same shape as a net leaf, minus the forward pass.
+ * `leaf: 'evaluate'` has the same shape as a net leaf, minus the forward pass.
  */
 function searchRate(overrides) {
   const state = states[states.length >> 1];
@@ -143,7 +143,7 @@ function searchRate(overrides) {
 }
 
 const mixedMs = searchRate({ leaf: 'mixed' });
-const heuristicMs = searchRate({ leaf: 'heuristic' });
+const heuristicMs = searchRate({ leaf: 'evaluate' });
 const perLeafSaved = incumbent - rows.find((r) => r.label.startsWith('evaluate')).micros;
 console.log(`\n  A whole 300-iteration search: ${mixedMs.toFixed(0)}ms with rollouts, ${heuristicMs.toFixed(0)}ms without.`);
 // The net leaf sits between the two: no rollout, but a forward pass on top of the heuristic's cost.

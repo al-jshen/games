@@ -16,6 +16,7 @@ import splendorDuel, {
   sampleAction,
   visitsToPolicy,
 } from '@games/splendor-duel';
+import { forward, loadNet } from './net.mjs';
 
 /** Self-play must terminate. The official rules do not guarantee it, so the house rule goes on. */
 export const OPTIONS = { maxTurnsWithoutPurchase: 60 };
@@ -33,7 +34,39 @@ export const deps = {
   },
 };
 
-function ismctsPlayer(config, record) {
+/**
+ * The same search with a network at the leaf instead of the hand-written evaluation.
+ *
+ * No change to `bot-ismcts` was needed and that is the point: `evaluate` was always a dependency the
+ * search takes rather than a function it owns, and `leaf: 'evaluate'` already means "evaluate the
+ * position, do not roll out" -- which is exactly AlphaZero's leaf. So swapping the evaluator is the
+ * whole change, and the search cannot tell the difference. Both return tanh into [-1, 1].
+ *
+ * Cached per worker thread, because this module is loaded once per worker and a 92KB read plus parse
+ * on every game would be pure overhead for a file that never changes mid-run.
+ */
+const nets = new Map();
+export function depsWithNet(path) {
+  let net = nets.get(path);
+  if (net === undefined) {
+    net = loadNet(path);
+    nets.set(path, net);
+  }
+  return {
+    ...deps,
+    /*
+     * Re-redacted at every leaf, deliberately. The state inside the tree is a *determinized* world
+     * with hidden information sampled, and the network was trained on redacted views -- so handing
+     * it the determinized state would feed it cards the player cannot see, at a scale it never saw
+     * in training. Redaction throws the sample away again, which is the correct thing: the sampled
+     * world decides which positions the search reaches, not what the evaluation is allowed to know.
+     */
+    evaluate: (state, seat) => forward(net, encodeView(redactFor(seat, state), seat))[0],
+  };
+}
+
+function ismctsPlayer(config, record, netPath) {
+  const searchDeps = netPath ? depsWithNet(netPath) : deps;
   let move = 0;
   const stats = { disagreement: [], noiseFloor: [], valueSpan: [] };
   /*
@@ -49,7 +82,7 @@ function ismctsPlayer(config, record) {
     choose(state, seat) {
       const view = JSON.parse(JSON.stringify(redactFor(seat, state)));
       // A fresh seed per move: reuse one for a whole game and every search samples the same worlds.
-      const result = search(deps, view, seat, { ...config, seed: `${config.seed}:${move++}` });
+      const result = search(searchDeps, view, seat, { ...config, seed: `${config.seed}:${move++}` });
       if (record) {
         samples.push({
           x: encodeView(view, seat),
@@ -77,7 +110,7 @@ function ismctsPlayer(config, record) {
       stats.valueSpan.push(result.valueRange.max - result.valueRange.min);
       // Expensive -- a separate search per world -- so only sampled occasionally.
       if (config.measureDisagreement && move % 12 === 0) {
-        const spread = measureDisagreement(deps, view, seat, { ...config, iterations: 120 }, 8);
+        const spread = measureDisagreement(searchDeps, view, seat, { ...config, iterations: 120 }, 8);
         stats.disagreement.push(spread.acrossWorlds);
         stats.noiseFloor.push(spread.sameWorld);
       }
@@ -100,7 +133,7 @@ function randomPlayer(seed) {
 
 /** Build a player from a plain description, so a whole matchup can cross a worker boundary. */
 export function makePlayer(spec, record = false) {
-  return spec.kind === 'random' ? randomPlayer(spec.seed) : ismctsPlayer(spec.config, record);
+  return spec.kind === 'random' ? randomPlayer(spec.seed) : ismctsPlayer(spec.config, record, spec.net);
 }
 
 /**

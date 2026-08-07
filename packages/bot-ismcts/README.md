@@ -35,7 +35,7 @@ than assumed. `BASELINE` has them all off; `DEFAULT_CONFIG` has the ones I would
 
 | Setting | What it does |
 | --- | --- |
-| `leaf` | `heuristic` / `rollout` / `mixed` at a freshly expanded node |
+| `leaf` | `evaluate` / `rollout` / `mixed` at a freshly expanded node |
 | `shrinkage` | how far `mixed` leans on the heuristic — a control variate against noisy rollouts |
 | `biasedRollout` | nudge rollouts toward purchases, since uniform play never builds an engine |
 | `commonRandomNumbers` | reuse a pool of worlds so siblings are compared under the same conditions |

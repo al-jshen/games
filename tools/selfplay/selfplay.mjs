@@ -113,7 +113,7 @@ if (ONLY === 'all' || ONLY === 'ab') {
     // If the small pool was the problem, this should look very different.
     ['common random numbers (pool 4x iters)', { commonRandomNumbers: true, worldPool: ITERATIONS * 4 }, { commonRandomNumbers: false }],
     ['heuristic shrinkage 0.5', { leaf: 'mixed', shrinkage: 0.5 }, { leaf: 'rollout', shrinkage: 0 }],
-    ['heuristic only (no rollout)', { leaf: 'heuristic' }, { leaf: 'rollout' }],
+    ['evaluator only (no rollout)', { leaf: 'evaluate' }, { leaf: 'rollout' }],
     ['biased rollouts', { biasedRollout: true }, { biasedRollout: false }],
     ['fast rollout sampler', { fastRollout: true }, { fastRollout: false }],
     /*
