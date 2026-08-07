@@ -163,8 +163,16 @@ def calibrate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor) -> float:
     then not scored. AlphaZero reaches for the same lever from the other side, adding Dirichlet noise
     at the root to stop a sharp prior from starving moves the search ought to look at.
     """
-    grid = np.geomspace(0.5, 8.0, 25)
-    return float(min(grid, key=lambda t: evaluate(model, x, pi, temperature=float(t))["ce"]))
+    # The top of the grid is far above any temperature a useful model wants, on purpose. A model with
+    # nothing to say is best flattened all the way to uniform, and the fit will chase that as far as
+    # it is allowed -- so an optimum sitting on the boundary is a finding, not a setting, and the
+    # range has to be wide enough that hitting the edge means something. It is reported when it does.
+    grid = np.geomspace(0.5, 64.0, 40)
+    best = float(min(grid, key=lambda t: evaluate(model, x, pi, temperature=float(t))["ce"]))
+    if best >= grid[-2]:
+        print(f"    (temperature pinned at the top of the grid -- this model is being erased"
+              f" into uniform rather than calibrated)")
+    return best
 
 
 def report(name: str, stats: dict, floor: float, note: str = "") -> dict:
