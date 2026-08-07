@@ -82,10 +82,18 @@ turn two is a near-random position with a coin flip stapled to it.
 ### Bootstrapping the value target
 
 Which is what `q` is for. The search's estimate varies row by row where the outcome does not, so
-mixing them trades a little bias for a lot of variance — the standard move, and not an invention
-here: MuZero bootstraps n-step returns from search values, and Leela Chess Zero trains on a blend of
-search Q and outcome Z. `train_value.py` fits at several mixtures, `target = (1-λ)·z + λ·q`, and
-scores every one of them against `z` alone.
+mixing them trades a little bias for a lot of variance — not an invention here. It is precisely
+[Leela Chess Zero's `q_ratio`](https://lczero.org/dev/wiki/neural-net-training/):
+`target = q_ratio·Q + (1 − q_ratio)·Z`, adopted for the same stated reason, that a single blunder
+flips Z for every position in the game. `train_value.py` fits at several mixtures,
+`target = (1-λ)·z + λ·q`, and scores every one of them against `z` alone.
+
+Worth being exact about the precedent, because the obvious citation is the wrong one.
+[MuZero](https://arxiv.org/abs/1911.08265) bootstraps n-step returns from search values — but only
+for Atari. Its Appendix G says the opposite for our case: *"For board games, we bootstrap directly to
+the end of the game, equivalent to predicting the final outcome; for Atari we bootstrap for n=10
+steps into the future."* Board-game AlphaZero and MuZero both train on the outcome. Lc0 is the
+board-game engine that blends, and it is the honest citation.
 
 On 1,200 games (960 training, 109,381 positions), held-out MSE:
 
@@ -111,7 +119,12 @@ pass in place of 300 iterations. That is the useful thing, and it is what AlphaZ
 for. It is not evidence that the features permit exceeding search quality.
 
 Two consequences. `q` at λ=1 is a distillation target, so it caps the network at search strength —
-escaping that needs the outcome to carry more weight, which needs more games. And the obvious next
-target is the genuinely MuZero-shaped one, not tried here: bootstrap from the search value *n moves
-later* rather than at the same position, which mixes in real played-out consequence instead of
-re-reading the same evaluation.
+escaping that needs the outcome to carry more weight, which needs more games.
+
+And the next thing to try is an n-step target: bootstrap from the search value *n moves later* rather
+than at the same position, so the label carries played-out consequence instead of re-reading one
+evaluation. That idea is worth testing on the strength of the table above and not on anyone's
+authority — MuZero uses n-step for Atari and explicitly declines it for board games. The reason to
+suspect it applies here anyway is scale: AlphaZero and MuZero trained board games on millions of
+self-play games, where the outcome label's variance averages out. At 960 games it plainly does not,
+which is what the λ column measures.

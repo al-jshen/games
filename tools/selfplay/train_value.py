@@ -11,9 +11,9 @@ than what we already have", and it is measured on games the network never saw.
 It also sweeps the *value target*. The obvious target is the game's outcome, but every position in a
 game carries the same one, so a hundred rows share a single bit and the effective sample size is the
 number of games rather than of positions. The search's own estimate of each position varies row by
-row, so mixing the two trades a little bias for a lot of variance -- the standard move: MuZero
-bootstraps n-step returns from search values, Leela Chess Zero trains on a blend of search Q and
-outcome Z. Whether it helps *here* is measured, not assumed.
+row, so mixing the two trades a little bias for a lot of variance. This is Leela Chess Zero's
+`q_ratio`: `target = q_ratio * Q + (1 - q_ratio) * Z`, and their reasoning is the same one -- a single
+blunder flips Z for every position in the game. Whether it helps *here* is measured, not assumed.
 
     python3 tools/selfplay/train_value.py .data/gen0
 """

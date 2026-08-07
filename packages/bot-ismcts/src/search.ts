@@ -73,8 +73,8 @@ export interface SearchResult<A> {
    * Worth recording alongside the eventual result, because unlike the result it *varies per
    * position*. Every position in a game carries the same outcome label, so the value target is one
    * bit per game shared across a hundred rows; a search estimate is a fresh number each time. Mixing
-   * the two is the standard bias-for-variance trade -- MuZero bootstraps n-step returns from search
-   * values, Leela Chess Zero trains on a blend of search Q and outcome Z.
+   * the two is the standard bias-for-variance trade: Leela Chess Zero trains its value head on
+   * `q_ratio * Q + (1 - q_ratio) * Z`, for exactly this reason.
    */
   rootValue: number;
   /** Spread of leaf evaluations seen. Narrow means the exploration term is swamping the values. */
