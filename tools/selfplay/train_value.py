@@ -136,11 +136,20 @@ def main(directory: str) -> int:
     best = results[best_kind]
     print()
 
-    if best["mse"] < heuristic["mse"] and best["accuracy"] > heuristic["accuracy"]:
-        gain = (heuristic["mse"] - best["mse"]) / heuristic["mse"]
+    gain = (heuristic["mse"] - best["mse"]) / heuristic["mse"]
+    beats = best["mse"] < heuristic["mse"] and best["accuracy"] > heuristic["accuracy"]
+    # A margin, not merely a win. Crossing over by one percent is inside the noise of which games
+    # landed in the held-out split, and calling that a success is how a project talks itself into
+    # building on a result that is not there.
+    if beats and gain > 0.05:
         print(f"  The learned value wins ({best_kind}): {gain:.0%} lower error, better sign agreement.")
         print("  The features carry signal. A value head is worth building on.")
         return 0
+    if beats:
+        print(f"  The learned value edges ahead ({best_kind}) by {gain:.0%}, which is inside the noise.")
+        print("  Signal, but not yet a result. And capacity still hurts, so it is still data-bound:")
+        print("  more games is the lever, not a different encoder.")
+        return 1
 
     # Which way it failed matters, and the two call for opposite responses.
     if results["linear"]["mse"] < results["mlp"]["mse"]:
