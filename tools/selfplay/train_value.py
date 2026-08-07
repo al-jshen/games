@@ -52,6 +52,25 @@ def pick_device(requested: str | None) -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def resident(device, *arrays):
+    """Move a split onto the device once and leave it there for the whole sweep.
+
+    Copying batches across as they are needed would spend more time on the bus than on the
+    arithmetic, since the step that consumes a batch takes microseconds.
+
+    The fallback exists because the amount that has to fit scales with the dataset and the dataset is
+    the thing we keep growing. Falling back is much better than discovering at 25,000 games that the
+    sweep no longer starts. Returns the device actually used, which may not be the one asked for.
+    """
+    try:
+        return device, [torch.from_numpy(a).to(device) for a in arrays]
+    except torch.cuda.OutOfMemoryError:
+        need = sum(a.nbytes for a in arrays) / 1e9
+        print(f"  {device} cannot hold {need:.1f} GB of split -- falling back to CPU")
+        torch.cuda.empty_cache()
+        return torch.device("cpu"), [torch.from_numpy(a) for a in arrays]
+
+
 def split_by_game(data, holdout=0.2):
     """Split on *games*, not positions.
 
@@ -155,31 +174,10 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
     print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game")
 
-    device = pick_device(device_name)
-
-    def resident(*arrays):
-        """Move a split onto the device once and leave it there for the whole sweep.
-
-        Copying batches across as they are needed would spend more time on the bus than on the
-        arithmetic, since the step that consumes a batch takes microseconds.
-
-        The fallback exists because the amount that has to fit scales with the dataset and the
-        dataset is the thing we keep growing. Falling back is much better than discovering at 25,000
-        games that the sweep no longer starts.
-        """
-        nonlocal device
-        try:
-            return [torch.from_numpy(a).to(device) for a in arrays]
-        except torch.cuda.OutOfMemoryError:
-            need = sum(a.nbytes for a in arrays) / 1e9
-            print(f"  {device} cannot hold {need:.1f} GB of split -- falling back to CPU")
-            device = torch.device("cpu")
-            torch.cuda.empty_cache()
-            return [torch.from_numpy(a) for a in arrays]
-
     z_test = data.z[test_mask]
-    x_train, z_train, q_train, x_test, z_test_t = resident(
-        data.x[train_mask], data.z[train_mask], data.q[train_mask], data.x[test_mask], z_test
+    device, (x_train, z_train, q_train, x_test, z_test_t) = resident(
+        pick_device(device_name),
+        data.x[train_mask], data.z[train_mask], data.q[train_mask], data.x[test_mask], z_test,
     )
     # From the shapes, not by re-indexing: `data.x[mask]` is a 5GB copy and it has been made already.
     gb = data.x.shape[0] * data.x.shape[1] * 4 / 1e9
