@@ -156,6 +156,57 @@ describe('the training dataset', () => {
     await writer.close();
   });
 
+  it('reads only the rows the sidecar publishes, ignoring a half-written tail', async () => {
+    /*
+     * What a killed run actually leaves behind. Rows go down first and the count is published after
+     * them, so the blobs overhang the sidecar by however much landed since the last flush -- and the
+     * overhang is the tail of a game whose six columns did not all make it. Taking the file's length
+     * as the row count would reshape that into rows stitched from different games, and every column
+     * would still be a plausible-looking float, so nothing downstream would complain.
+     */
+    const meta = {
+      seeds: ['s0'],
+      featureSize: FEATURE_SIZE,
+      policySize: POLICY_SIZE,
+      featureLayout: {},
+      policyLayout: {},
+      config: {},
+      generatedAt: 'now',
+    };
+    const writer = await openDataset(dir, meta);
+    await writer.append(Array.from({ length: 12 }, (_, i) => sample(i)));
+    await writer.flush();
+    // Lands on disk but is never published -- the process dies here.
+    await writer.append(Array.from({ length: 8 }, (_, i) => sample(100 + i)));
+
+    const back = await readDataset(dir);
+    expect(back.sidecar.rows).toBe(12);
+    expect(back.x).toHaveLength(12 * FEATURE_SIZE);
+    expect(back.pi).toHaveLength(12 * POLICY_SIZE);
+    expect(back.meta).toHaveLength(12 * 3);
+    // The published rows, and specifically not the unpublished ones.
+    expect([...back.z]).toEqual(Array.from({ length: 12 }, (_, i) => sample(i).z));
+    await writer.close();
+  });
+
+  it('refuses a dataset whose blobs are shorter than the sidecar claims', async () => {
+    // The other direction is corruption, not an interruption, and there is nothing safe to return.
+    const samples = Array.from({ length: 12 }, (_, i) => sample(i));
+    await writeDataset(dir, {
+      samples,
+      seeds: ['s0'],
+      featureSize: FEATURE_SIZE,
+      policySize: POLICY_SIZE,
+      featureLayout: {},
+      policyLayout: {},
+      config: {},
+      generatedAt: 'now',
+    });
+    const { truncateSync } = await import('node:fs');
+    truncateSync(join(dir, 'z.f32'), 4 * 5);
+    await expect(readDataset(dir)).rejects.toThrow(/short of the 12/);
+  });
+
   it('writes exactly the number of bytes the sidecar claims', async () => {
     // What a reader in another language actually depends on: file length divided by stride.
     const samples = Array.from({ length: 12 }, (_, i) => sample(i));

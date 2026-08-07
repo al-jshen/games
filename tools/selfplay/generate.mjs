@@ -97,6 +97,12 @@ const drain = async () => {
 };
 
 await runJobs(jobs, WORKERS, (result, index) => {
+  /*
+   * Stop at the first failed write rather than at the end of the run. The writes are serialised
+   * behind the pool, so a full disk an hour in would otherwise be discovered an hour later, having
+   * spent the whole time generating games it had nowhere to put.
+   */
+  if (failure) throw failure;
   finished += 1;
   if (result.aWon !== null) decided += 1;
   pending.set(index, result.samples ?? []);

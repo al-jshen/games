@@ -37,7 +37,25 @@ def load(directory: str | Path) -> Dataset:
     sidecar = json.loads((d / "dataset.json").read_text())
     rows, f, p = sidecar["rows"], sidecar["featureSize"], sidecar["policySize"]
 
-    def column(name: str, optional: bool = False) -> np.ndarray:
+    def fit(raw: np.ndarray, name: str, width: int) -> np.ndarray:
+        """Take exactly the rows the sidecar claims, which may be fewer than the file holds.
+
+        Generation appends rows and republishes the count afterwards, so a run that was interrupted
+        -- and a long one usually is -- leaves blobs running past the last published row: the tail of
+        a game whose six columns did not all land. The count is the authority and the overhang is
+        dropped, which is why it is published second. Reshaping the whole file instead would fail
+        outright on the one kind of dataset this ordering exists to keep readable.
+
+        Short is the opposite story, and not recoverable: the file is truncated or the layout moved.
+        """
+        want = rows * width
+        if raw.size < want:
+            raise ValueError(
+                f"{name!r} holds {raw.size} values, short of the {want} the sidecar claims"
+            )
+        return raw[:want].reshape(rows, width) if width > 1 else raw[:want]
+
+    def column(name: str, optional: bool = False, width: int = 1) -> np.ndarray:
         """A `float32` column, or zeros if the dataset predates it.
 
         Columns get added over time and datasets are large enough that regenerating one to read it is
@@ -49,15 +67,15 @@ def load(directory: str | Path) -> Dataset:
         if file is None:
             if not optional:
                 raise KeyError(f"dataset at {d} has no {name!r} column")
-            return np.zeros(rows, dtype="<f4")
-        return np.fromfile(d / file, dtype="<f4")
+            return np.zeros(rows if width == 1 else (rows, width), dtype="<f4")
+        return fit(np.fromfile(d / file, dtype="<f4"), name, width)
 
-    x = np.fromfile(d / sidecar["files"]["x"], dtype="<f4").reshape(rows, f)
-    pi = np.fromfile(d / sidecar["files"]["pi"], dtype="<f4").reshape(rows, p)
+    x = column("x", width=f)
+    pi = column("pi", width=p)
     z = column("z")
     q = column("q", optional=True)
     h = column("h", optional=True)
-    meta = np.fromfile(d / sidecar["files"]["meta"], dtype="<i4").reshape(rows, 3)
+    meta = fit(np.fromfile(d / sidecar["files"]["meta"], dtype="<i4"), "meta", 3)
 
     # Shapes are asserted rather than trusted: a layout change on the TypeScript side would otherwise
     # reshape silently into nonsense and train perfectly happily on it.

@@ -132,17 +132,28 @@ export async function writeDataset(dir, { samples, ...meta }) {
 /** Read a dataset back. Used by the tests, and by anything in Node that wants to inspect one. */
 export async function readDataset(dir) {
   const sidecar = JSON.parse(await readFile(join(dir, 'dataset.json'), 'utf8'));
-  const load = async (name, Kind) => {
+  /*
+   * Cut to the row count the sidecar publishes rather than to the length of the file. The two differ
+   * whenever a run was interrupted: rows are appended and the count is published after them, so the
+   * blobs can run past the last published row with the tail of a game whose columns did not all
+   * land. Reading the overhang would hand back rows stitched from different games.
+   */
+  const load = async (name, Kind, width) => {
     const buf = await readFile(join(dir, name));
-    return new Kind(buf.buffer, buf.byteOffset, buf.byteLength / Kind.BYTES_PER_ELEMENT);
+    const all = new Kind(buf.buffer, buf.byteOffset, buf.byteLength / Kind.BYTES_PER_ELEMENT);
+    const want = sidecar.rows * width;
+    if (all.length < want) {
+      throw new Error(`${name} holds ${all.length} values, short of the ${want} the sidecar claims`);
+    }
+    return all.subarray(0, want);
   };
   return {
     sidecar,
-    x: await load(sidecar.files.x, Float32Array),
-    pi: await load(sidecar.files.pi, Float32Array),
-    z: await load(sidecar.files.z, Float32Array),
-    q: await load(sidecar.files.q, Float32Array),
-    h: await load(sidecar.files.h, Float32Array),
-    meta: await load(sidecar.files.meta, Int32Array),
+    x: await load(sidecar.files.x, Float32Array, sidecar.featureSize),
+    pi: await load(sidecar.files.pi, Float32Array, sidecar.policySize),
+    z: await load(sidecar.files.z, Float32Array, 1),
+    q: await load(sidecar.files.q, Float32Array, 1),
+    h: await load(sidecar.files.h, Float32Array, 1),
+    meta: await load(sidecar.files.meta, Int32Array, 3),
   };
 }

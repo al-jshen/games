@@ -13,10 +13,11 @@ dist/
 .cache/
 tools/*/.cache/
 
-# python
+# python. Glob rather than a bare `.venv/`, because a venv is tied to the machine that built it and
+# a checkout shared between two -- a laptop and a big Linux box, say -- needs one of each.
 __pycache__/
 *.egg-info/
-.venv/
+.venv*/
 venv/
 
 .DS_Store

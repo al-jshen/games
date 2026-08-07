@@ -17,6 +17,35 @@ node tools/selfplay/generate.mjs --games 300 --out .data/gen0
 python3 tools/selfplay/train_value.py .data/gen0
 ```
 
+## Generating at scale
+
+A generation run is hours long, and both of this section's decisions come from that one fact.
+
+**Rows are appended as games finish, not held and written at the end.** The obvious shape — collect
+every sample, write once — loses the entire run to a single interruption, which has already happened
+twice here. Appending means a killed run leaves a shorter dataset that is completely valid.
+
+The sidecar is rewritten as it goes and is written *after* the blobs it describes, so its row count
+lags what is on disk rather than leading it. That direction is deliberate: a reader that trusts a
+count the files do not contain reads off the end, while one that trusts a count they exceed merely
+truncates. Both readers cut to the published count for exactly this reason, and treat the short case
+— a genuinely damaged file — as an error. An interrupted dataset is a usable dataset.
+
+**Workers default to one fewer than the machine has.** There used to be a ceiling of 16, from when
+this only ever ran on a laptop, and it is expensive anywhere else: on 96 cores, lifting it took
+generation from 1.44 games/s to 4.41, or 4h49m down to 1h34m for 25,000 games. The parent looks like
+it should need more than one core — it packs ~340KB of `Float32Array` per game and appends six files
+— but measured mid-run it sits at 1.2% of one, so reserving more just leaves cores idle.
+
+Games are written in game order however they finish, so a seed set produces the same bytes at any
+worker count. Verified: 16 and 90 workers give byte-identical blobs.
+
+```bash
+node tools/selfplay/generate.mjs --games 25000 --iterations 300 --out .data/gen0-25k
+```
+
+Progress, throughput and an ETA print as it goes. Roughly 91 positions and 350KB per game.
+
 ## The dataset format
 
 Raw little-endian `float32` blobs and a JSON sidecar — `np.fromfile(...).reshape(-1, width)`, no
@@ -121,10 +150,14 @@ for. It is not evidence that the features permit exceeding search quality.
 Two consequences. `q` at λ=1 is a distillation target, so it caps the network at search strength —
 escaping that needs the outcome to carry more weight, which needs more games.
 
-And the next thing to try is an n-step target: bootstrap from the search value *n moves later* rather
-than at the same position, so the label carries played-out consequence instead of re-reading one
-evaluation. That idea is worth testing on the strength of the table above and not on anyone's
-authority — MuZero uses n-step for Atari and explicitly declines it for board games. The reason to
-suspect it applies here anyway is scale: AlphaZero and MuZero trained board games on millions of
-self-play games, where the outcome label's variance averages out. At 960 games it plainly does not,
-which is what the λ column measures.
+An **n-step target** — bootstrapping from the search value *n moves later*, so the label carries
+played-out consequence rather than a re-read of the same evaluation — is the obvious way past that
+ceiling, and it was considered and deliberately set aside. It has no board-game precedent at scale:
+MuZero uses n-step for Atari and explicitly declines it for board games, and the argument for trying
+it here rests entirely on the table above. The standing call is to prefer what is proven at scale
+over what is locally plausible, so the lever is more games, not a cleverer target.
+
+Which is what makes the pure-outcome column the one to watch. AlphaZero's recipe was demonstrated on
+millions of self-play games; at 960 the outcome label's variance plainly does not average out, and
+that is exactly what the λ column measures. If λ=0 crosses the heuristic on its own once there are
+enough games, the blend is unnecessary and gets dropped on evidence rather than on citation.

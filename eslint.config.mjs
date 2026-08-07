@@ -38,7 +38,10 @@ const BROWSER_GLOBALS = {
 };
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.generated.ts', '**/.cache/**'] },
+  // `.venv*` because the Python side of the self-play tooling lives in a virtualenv beside the
+  // source, and installing torch into one drops a handful of vendored `.js` files in `lib/` that are
+  // nobody's code to fix.
+  { ignores: ['**/dist/**', '**/node_modules/**', '**/*.generated.ts', '**/.cache/**', '**/.venv*/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
