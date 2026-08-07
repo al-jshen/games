@@ -22,6 +22,9 @@ import { DEFAULT_CONFIG, search } from '@games/bot-ismcts';
 import splendorDuel, { encodeView, evaluate, redactFor, sampleAction } from '@games/splendor-duel';
 import { forward, loadNet } from './net.mjs';
 import { deps, OPTIONS } from './game.mjs';
+import { requireFreshBuild } from './fresh.mjs';
+
+requireFreshBuild();
 
 const MODEL = process.argv[2] ?? '.data/models/value-gen0';
 const net = loadNet(MODEL);

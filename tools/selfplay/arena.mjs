@@ -18,6 +18,9 @@
 
 import { BASELINE, DEFAULT_CONFIG } from '@games/bot-ismcts';
 import { defaultWorkers, runJobs } from './pool.mjs';
+import { requireFreshBuild } from './fresh.mjs';
+
+requireFreshBuild();
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
