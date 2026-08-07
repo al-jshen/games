@@ -59,8 +59,20 @@ const NET = flag('net', null);
  * It is not free. A sampled move is sometimes a worse move, and `z` is the outcome of the game that
  * actually got played -- so exploration adds noise to the label the value head is already starved
  * of. AlphaZero could absorb that across 44 million games. Worth watching at 25,000.
+ *
+ * **Off by default, on measurement.** Sampling in proportion to visits only means anything if the
+ * visits mean something, and in the opening they do not. Measured at 300 iterations from a position
+ * with 48 legal moves: the most-visited move had 16 visits, 5.3%, and the distribution's effective
+ * support was 45.9 moves -- indistinguishable from uniform. UCB1 spends the first 48 iterations
+ * force-visiting every child and the remaining 252 spread five apiece, which separates nothing. So
+ * T=1 over the opening would not diversify the data, it would play the opening at random.
+ *
+ * The same position at 1232 iterations concentrates properly -- 28.2% on the favourite, effective
+ * support 27.3 -- and mid-game positions with six legal moves concentrate at 300. So this becomes
+ * worth switching on with a deeper search, or once PUCT stops the budget being spread uniformly
+ * across every legal move. It is a real lever; it is just not calibrated for the search we have.
  */
-const TEMPERATURE = Number(flag('temperature', '1.0'));
+const TEMPERATURE = Number(flag('temperature', '0'));
 const TEMPERATURE_MOVES = Number(flag('temperature-moves', '15'));
 const explore = TEMPERATURE > 0 ? { temperature: TEMPERATURE, moves: TEMPERATURE_MOVES } : null;
 
