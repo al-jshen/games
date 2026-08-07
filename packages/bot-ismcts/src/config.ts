@@ -79,8 +79,24 @@ export interface SearchConfig {
    * MuZero rescales Q against the min and max observed in the tree, which is the same mechanism —
    * but for the opposite complaint, and its reasoning does not transfer. It is fixing values that
    * are *unbounded*, and says so of the case we are actually in: "In two-player zero sum games the
-   * value functions are assumed to be bounded within the [0,1] interval." The justification here is
-   * the narrow band, and it stands on the A/B result below rather than on that paper.
+   * value functions are assumed to be bounded within the [0,1] interval."
+   *
+   * **Off by default, on the principle that it is not what anyone else does.** AlphaZero and Leela
+   * both keep a fixed [-1, 1] scale and tune the exploration constant against it; the only engine
+   * that min-max rescales is doing it for unbounded values and declines it for board games. The
+   * evidence for turning it on here was a twenty-game A/B, and twenty games resolves nothing -- the
+   * arena puts 120 games at plus or minus 62 elo.
+   *
+   * Two costs, beyond the departure from precedent. It amplifies noise along with signal: this
+   * network reports root positions in a band 0.14 wide, so filling [0, 1] multiplies everything by
+   * about seven, and a 3000-iteration search here already disagrees with itself a quarter of the
+   * time. And it destroys any absolute reference -- "Q = 0 is neutral" becomes "zero is wherever it
+   * falls between this node's siblings", which is what made PUCT's unvisited children unreachable.
+   *
+   * It is coupled to `exploration`, which was chosen alongside it and has never been tuned either.
+   * Without rescaling the values arrive in roughly [0.50, 0.57], so 1.4 is likely too large now.
+   * If turning this off costs strength, that is the first thing to look at rather than evidence for
+   * rescaling.
    */
   normaliseValues: boolean;
 
@@ -101,28 +117,24 @@ export interface SearchConfig {
    * Under `ucb1` the policy network is never consulted, and `deps.priors` may be absent. That is the
    * point of the toggle: one search, one measurement at a time.
    *
-   * **Measured, and `puct` currently loses badly.** Against the same search with `ucb1`, both using
-   * the same value network at the leaf: 30-90 over 120 games with priors at the root, and 4-16 over
-   * 20 at full depth. On move agreement with a 3000-iteration reference across 150 positions, `ucb1`
-   * scores 44% and `puct` 33-39% at every exploration constant from 1.5 to 16.
+   * **`puct` lost 30-90 and then turned out to have a bug, which is worth recording in that order.**
+   * Unvisited children were scored at a nominal `Q = 0` passed through `rescale`, which under
+   * `normaliseValues` put them near the bottom of the sibling range rather than at the middle -- so a
+   * move the prior did not favour was unreachable rather than merely deprioritised. See `selectPuct`.
    *
-   * The reason is not tuning, and it is worth understanding before trying again. PUCT trades
-   * exploration for prior-guidance, and there is no prior-guidance here to gain: gen-0's policy head
-   * produces priors with an effective support of 47.7 out of 48 legal moves, which is uniform to
-   * within a rounding error. Meanwhile the trade costs real exploration -- at a child with ten
-   * visits, UCB1's bonus is ~1.06 against PUCT's ~0.05 on the same [0, 1] value scale, a twentyfold
-   * difference in how fast the search stops questioning itself.
+   * Before diagnosing it I wrote three confident explanations for the loss: the prior said nothing,
+   * the sims-to-branching ratio was too thin, determinization needs more exploration than perfect
+   * information does. The second and third are probably true in general. Neither was the cause, and
+   * the first was simply wrong -- the priors are 1.5 to 3x uniform on their top slot.
    *
-   * And this search needs that questioning more than AlphaZero's does. Every iteration re-determinizes,
-   * so the same node returns a different value depending on which world was drawn: a 3000-iteration
-   * search agrees with *itself* on only 74% of positions across reseeds. UCB1's oversized exploration
-   * term is insurance against that variance, and PUCT cashes it in for a prior that says nothing.
+   * After the fix, on move agreement with a 3000-iteration reference over 150 positions: `ucb1` 44%,
+   * `puct` 47-53% depending on the constant, best around c=4. That is a proxy and the intervals
+   * overlap, so it says "worth playing games over", not "better".
    *
-   * Which points at the order of operations rather than at abandoning it. `pi` is flat in exactly the
-   * high-branching positions where a prior would earn its keep, because the search that produced the
-   * targets did not concentrate there either -- 5.3% on the favourite at 300 iterations, 28.2% at
-   * 1232. Deeper search sharpens the targets, sharper targets train a policy head worth consulting,
-   * and then this becomes worth re-running.
+   * Two things remain true regardless. `pi` is flat in the high-branching positions where a prior
+   * would earn its keep, because the search that produced those targets did not concentrate there
+   * either -- 5.3% on the favourite at 300 iterations, 28.2% at 1232. And the exploration constant
+   * here is borrowed, not measured.
    */
   selection: 'ucb1' | 'puct';
   /**
@@ -184,7 +196,6 @@ export const DEFAULT_CONFIG: SearchConfig = {
   biasedRollout: true,
   fastRollout: true,
   commonRandomNumbers: false,
-  normaliseValues: true,
 };
 
 export function withConfig(overrides: Partial<SearchConfig> = {}): SearchConfig {
