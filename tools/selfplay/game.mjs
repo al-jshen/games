@@ -60,6 +60,14 @@ function ismctsPlayer(config, record) {
            * nothing about whether the network is worth having.
            */
           h: evaluate(determinize(view, seat, new RandomCursor(`h:${config.seed}:${move}`, 0)), seat),
+          /*
+           * What the search concluded about this position. Recorded separately from `z` rather than
+           * blended into it, and deliberately so: it derives from the heuristic through the rollouts,
+           * so training against it partly distils the heuristic. Keeping it apart lets the trainer
+           * choose a mix while still being scored against the actual result -- blend the two here and
+           * "does the network beat the heuristic?" would quietly become circular.
+           */
+          q: result.rootValue,
           seat,
           move: move - 1,
           // Filled in once the game ends; a position's worth is not known until then.

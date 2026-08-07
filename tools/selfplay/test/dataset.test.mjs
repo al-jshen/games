@@ -26,7 +26,16 @@ function sample(i) {
   // A normalised distribution, as the real target is.
   pi[i % POLICY_SIZE] = 0.75;
   pi[(i * 7 + 3) % POLICY_SIZE] += 0.25;
-  return { x, pi, z: [1, -1, 0][i % 3], h: (i % 11) / 11 - 0.5, game: Math.floor(i / 4), move: i % 4, seat: i % 2 };
+  return {
+    x,
+    pi,
+    z: [1, -1, 0][i % 3],
+    q: (i % 7) / 7 - 0.5,
+    h: (i % 11) / 11 - 0.5,
+    game: Math.floor(i / 4),
+    move: i % 4,
+    seat: i % 2,
+  };
 }
 
 describe('the training dataset', () => {
@@ -57,6 +66,7 @@ describe('the training dataset', () => {
       expect(Array.from(back.x.slice(i * FEATURE_SIZE, (i + 1) * FEATURE_SIZE))).toEqual(Array.from(original.x));
       expect(Array.from(back.pi.slice(i * POLICY_SIZE, (i + 1) * POLICY_SIZE))).toEqual(Array.from(original.pi));
       expect(back.z[i]).toBe(original.z);
+      expect(back.q[i]).toBeCloseTo(original.q, 6);
       expect(back.h[i]).toBeCloseTo(original.h, 6);
       expect([back.meta[i * 3], back.meta[i * 3 + 1], back.meta[i * 3 + 2]]).toEqual([
         original.game,
@@ -104,6 +114,7 @@ describe('the training dataset', () => {
     expect(statSync(join(dir, sidecar.files.x)).size).toBe(12 * FEATURE_SIZE * 4);
     expect(statSync(join(dir, sidecar.files.pi)).size).toBe(12 * POLICY_SIZE * 4);
     expect(statSync(join(dir, sidecar.files.z)).size).toBe(12 * 4);
+    expect(statSync(join(dir, sidecar.files.q)).size).toBe(12 * 4);
     expect(statSync(join(dir, sidecar.files.h)).size).toBe(12 * 4);
     expect(statSync(join(dir, sidecar.files.meta)).size).toBe(12 * 3 * 4);
   });

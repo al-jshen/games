@@ -80,6 +80,11 @@ function pick(state: TicTacToeState, seat: Seat, config: Partial<SearchConfig> =
   return (chosen as { cell: number }).cell;
 }
 
+/** The search's own estimate of a position, in [-1, 1] from `seat`'s point of view. */
+function rootValueOf(state: TicTacToeState, seat: Seat): number {
+  return search(deps, viewFor(state, seat), seat, withConfig({ iterations: 600 })).rootValue;
+}
+
 describe('the search, against a game with known answers', () => {
   it('takes a win when one is on offer', () => {
     // X on 0 and 1; 2 completes the top row. Anything else throws the game away.
@@ -89,6 +94,31 @@ describe('the search, against a game with known answers', () => {
     state = play(state, 0, 1);
     state = play(state, 1, 5);
     expect(pick(state, 0)).toBe(2);
+  });
+
+  it('reports a root value that knows who is winning', () => {
+    /*
+     * The root value is recorded as a training target, so it has to mean what it says. A blend that
+     * leaned on a number with the wrong sign would poison every position in the dataset, and nothing
+     * downstream would flag it -- the loss would fall perfectly well against a wrong target.
+     */
+    let won = fresh();
+    won = play(won, 0, 0);
+    won = play(won, 1, 4);
+    won = play(won, 0, 1);
+    won = play(won, 1, 5);
+    // X to move with 2 completing the top row.
+    const winning = rootValueOf(won, 0);
+    expect(winning).toBeGreaterThan(0.5);
+    expect(winning).toBeLessThanOrEqual(1);
+
+    // The same position from the other chair: about to be beaten, and it should say so.
+    let lost = fresh();
+    lost = play(lost, 0, 0);
+    lost = play(lost, 1, 4);
+    lost = play(lost, 0, 1);
+    // O to move, and only one move survives, so most of the tree is losing.
+    expect(rootValueOf(lost, 1)).toBeLessThan(winning);
   });
 
   it('blocks a loss when one is threatened', () => {

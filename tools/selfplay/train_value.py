@@ -8,6 +8,13 @@ are wrong and the loop would be built on sand.
 Deliberately small: an MLP, a few minutes on CPU, no tuning. The bar is not "good", it is "better
 than what we already have", and it is measured on games the network never saw.
 
+It also sweeps the *value target*. The obvious target is the game's outcome, but every position in a
+game carries the same one, so a hundred rows share a single bit and the effective sample size is the
+number of games rather than of positions. The search's own estimate of each position varies row by
+row, so mixing the two trades a little bias for a lot of variance -- the standard move: MuZero
+bootstraps n-step returns from search values, Leela Chess Zero trains on a blend of search Q and
+outcome Z. Whether it helps *here* is measured, not assumed.
+
     python3 tools/selfplay/train_value.py .data/gen0
 """
 
@@ -71,11 +78,15 @@ def report(name: str, pred: np.ndarray, z: np.ndarray) -> dict:
     return {"mse": mse, "accuracy": accuracy, "corr": corr}
 
 
-def fit(kind, x_train, z_train, x_test, z_test, epochs=40, decay=1e-4):
+def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4):
     """Train, and keep the parameters from the best held-out epoch rather than the last.
 
     Without early stopping this measures how thoroughly a model can memorise 300 games, which is not
     the question.
+
+    `target_train` is what the model is fitted to and may be a blend; `z_test` is the real outcome
+    and is what it is early-stopped and scored on. Those must not be the same quantity, or a blend
+    would be judged by how well it reproduces itself.
     """
     model = make_model(x_train.shape[1], kind)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=decay)
@@ -88,7 +99,7 @@ def fit(kind, x_train, z_train, x_test, z_test, epochs=40, decay=1e-4):
         for i in range(0, len(order), 256):
             idx = order[i : i + 256]
             opt.zero_grad()
-            loss_fn(model(x_train[idx]).squeeze(-1), z_train[idx]).backward()
+            loss_fn(model(x_train[idx]).squeeze(-1), target_train[idx]).backward()
             opt.step()
         model.eval()
         with torch.no_grad():
@@ -111,29 +122,64 @@ def main(directory: str) -> int:
 
     x_train = torch.from_numpy(data.x[train_mask])
     z_train = torch.from_numpy(data.z[train_mask])
+    q_train = torch.from_numpy(data.q[train_mask])
     x_test = torch.from_numpy(data.x[test_mask])
     z_test_t = torch.from_numpy(data.z[test_mask])
     z_test = data.z[test_mask]
 
     games = len(np.unique(data.meta[train_mask, 0]))
-    print(f"  {games} training games -- which is the effective number of independent labels,")
-    print("  since every position in a game shares one outcome.\n")
+    print(f"  {games} training games. Every position in one shares a single outcome, so against a")
+    print("  pure outcome target the effective sample size sits far nearer that than the row count.\n")
 
     print("On games neither the network nor the heuristic has seen:")
     heuristic = report("hand-written", data.h[test_mask], z_test)
     # Predicting nothing is the floor. A model that only learned the base rate would still look
     # respectable on mean squared error alone.
     report("always zero", np.zeros_like(z_test), z_test)
+
+    # The search's own estimate, scored as if it were a prediction. Worth seeing before using it as
+    # a target: this is the ceiling for the part of the signal that comes from `q`.
+    has_q = not np.allclose(data.q, 0)
+    if has_q:
+        report("search value (q)", data.q[test_mask], z_test)
+        # How much of `q` is just the heuristic wearing a hat. The search evaluates leaves with the
+        # heuristic, so a blend that leans on `q` partly distils it -- worth knowing how much.
+        print(f"  {'q vs heuristic':<22} corr {np.corrcoef(data.q, data.h)[0, 1]:+.3f}"
+              "   (they share the leaf evaluator, so overlap is expected)")
+    else:
+        print("  no search values in this dataset -- outcome target only")
     print()
 
+    # 0 is the pure game outcome, 1 the pure search estimate. In between trades the outcome's
+    # unbiasedness for the search estimate's much lower variance.
+    lambdas = [0.0, 0.3, 0.6, 1.0] if has_q else [0.0]
     results = {}
     for kind in ("linear", "tiny", "mlp"):
-        pred, epoch = fit(kind, x_train, z_train, x_test, z_test_t)
-        results[kind] = report(f"learned ({kind})", pred, z_test)
-        results[kind]["epoch"] = epoch
+        for lam in lambdas:
+            target = (1 - lam) * z_train + lam * q_train
+            pred, epoch = fit(kind, x_train, target, x_test, z_test_t)
+            results[(kind, lam)] = report(f"learned ({kind}, l={lam:g})", pred, z_test)
+            results[(kind, lam)]["epoch"] = epoch
+        print()
 
-    best_kind = min(results, key=lambda k: results[k]["mse"])
-    best = results[best_kind]
+    best_kind, best_lambda = min(results, key=lambda k: results[k]["mse"])
+    best = results[(best_kind, best_lambda)]
+
+    if has_q and best_lambda == 0:
+        # The sweep ran and the outcome still won. Worth saying plainly -- a blend that did not help
+        # is a result, and leaving it implicit invites someone to add it again later.
+        blended = min(results[(best_kind, l)]["mse"] for l in lambdas if l > 0)
+        print(f"  Bootstrapping did not help: the pure outcome target won at {best['mse']:.4f},"
+              f" against {blended:.4f} for the best blend.")
+    elif has_q:
+        # Did the blend earn its keep, holding capacity fixed? Comparing the best blend against the
+        # best outcome-only model would let a lucky capacity take credit for the target.
+        pure = results[(best_kind, 0.0)]["mse"]
+        delta = (pure - best["mse"]) / pure
+        verdict = "clear of" if delta > 0.02 else "inside the noise of"
+        print(f"  Best target: l={best_lambda:g} at {best['mse']:.4f}, {delta:+.0%} against the pure"
+              f" outcome's {pure:.4f} at the same capacity -- {verdict} it.")
+    best_kind = f"{best_kind}, l={best_lambda:g}"
     print()
 
     gain = (heuristic["mse"] - best["mse"]) / heuristic["mse"]
@@ -152,7 +198,7 @@ def main(directory: str) -> int:
         return 1
 
     # Which way it failed matters, and the two call for opposite responses.
-    if results["linear"]["mse"] < results["mlp"]["mse"]:
+    if min(results[("linear", l)]["mse"] for l in lambdas) < min(results[("mlp", l)]["mse"] for l in lambdas):
         print("  No model beats the heuristic yet, but the *linear* model beats the larger ones —")
         print("  the classic signature of too little data rather than bad features. With one label")
         print(f"  per game, {games} games is not enough to fit anything with capacity.")

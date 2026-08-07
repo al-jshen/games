@@ -67,6 +67,16 @@ export interface SearchResult<A> {
   /** Visit share per action, most-visited first. The search's opinion, not just its pick. */
   ranking: { action: A; visits: number; value: number }[];
   iterations: number;
+  /**
+   * The search's own estimate of the position, in [-1, 1] from the searching seat's point of view.
+   *
+   * Worth recording alongside the eventual result, because unlike the result it *varies per
+   * position*. Every position in a game carries the same outcome label, so the value target is one
+   * bit per game shared across a hundred rows; a search estimate is a fresh number each time. Mixing
+   * the two is the standard bias-for-variance trade -- MuZero bootstraps n-step returns from search
+   * values, Leela Chess Zero trains on a blend of search Q and outcome Z.
+   */
+  rootValue: number;
   /** Spread of leaf evaluations seen. Narrow means the exploration term is swamping the values. */
   valueRange: { min: number; max: number };
 }
@@ -126,6 +136,7 @@ function runSearch<S, A, V, O>(
     action: ranking[0]!.action,
     ranking,
     iterations: config.iterations,
+    rootValue: root.visits > 0 ? root.total / root.visits : 0,
     valueRange: { min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 },
   };
 }

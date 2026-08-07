@@ -24,8 +24,16 @@ library on either side. `read_dataset.py` is the whole Python end, and it knows 
 Splendor Duel: by the time data reaches it a position is an array of floats, which is what lets the
 rules stay in one language.
 
-Each row carries its game, move number and seat, so a suspicious sample leads back to a seed and can
-be opened in the replay viewer. Without that a bad row is 719 anonymous floats.
+Each row is `x` (the encoded view), `pi` (the search's visit counts over the policy space), and two
+value signals — `z`, how the game turned out, and `q`, what the search concluded about that position.
+Plus `h`, the hand-written heuristic's opinion, kept purely as a baseline to be measured against.
+
+`z` and `q` are stored separately rather than pre-blended, because the trainer needs both: `q` is
+derived from the heuristic through the rollouts, so a model fitted to it partly distils the
+heuristic. Blend at write time and "does the network beat the heuristic?" quietly becomes circular.
+
+Each row also carries its game, move number and seat, so a suspicious sample leads back to a seed and
+can be opened in the replay viewer. Without that a bad row is 719 anonymous floats.
 
 ## What the validation said
 
@@ -59,7 +67,51 @@ worse than the heuristic to 1% better. One percent is inside the noise of which 
 held-out split, so it is not yet a result — but the *direction and size* of the move is the actual
 finding, and it says the lever is more games.
 
-The reason is structural and worth internalising before scaling anything: **one outcome label per
-game.** 149,000 positions sound like a lot and are 1,200 independent labels, because every position
-in a game is tagged with the same result. The effective sample size is games, not rows — so a run
-that takes 25 minutes buys 1,200 labels, and the interesting regime is further out than it looks.
+The reason is structural and worth internalising before scaling anything: **the outcome label is
+shared across a whole game.** 149,000 positions sound like a lot; a single coin flip decides the
+label on all ~99 rows of a game. The inputs all differ, so it is not literally 1,200 data points —
+but it is clustered data whose targets are perfectly correlated within a cluster, and the effective
+sample size for the value head sits far closer to games than to rows. A run that takes 25 minutes
+buys 1,200 outcomes, and the interesting regime is further out than the row count suggests.
+
+Two caveats on that, in both directions. It does not apply to the **policy** head at all — every row
+has its own visit distribution, so those are 149,000 genuinely distinct targets. And it is not even
+across a game: a position three moves from the end is nearly determined by the board, while one on
+turn two is a near-random position with a coin flip stapled to it.
+
+### Bootstrapping the value target
+
+Which is what `q` is for. The search's estimate varies row by row where the outcome does not, so
+mixing them trades a little bias for a lot of variance — the standard move, and not an invention
+here: MuZero bootstraps n-step returns from search values, and Leela Chess Zero trains on a blend of
+search Q and outcome Z. `train_value.py` fits at several mixtures, `target = (1-λ)·z + λ·q`, and
+scores every one of them against `z` alone.
+
+On 1,200 games (960 training, 109,381 positions), held-out MSE:
+
+| target | linear | small net | larger net |
+| --- | --- | --- | --- |
+| λ=0 — pure outcome | 0.9079 | 0.9635 | 1.1095 |
+| λ=0.3 | 0.8823 | 0.9282 | 1.0206 |
+| λ=0.6 | 0.8668 | 0.8881 | 0.9320 |
+| **λ=1 — pure search value** | **0.8631** | **0.8571** | **0.8786** |
+
+Monotone in every column: 11% better at small capacity, 21% at large. The variance argument holds,
+and at this data size there is no interior optimum — the outcome label is noisy enough that the more
+of it you replace, the better. Capacity still hurts at every λ, so it is still data-bound.
+
+**The deflating half, which matters more than the win.** `q` scores **0.8174** by itself, against the
+heuristic's 0.8789 — better than any network fitted to it. The network is not surpassing its teacher,
+it is approximating it imperfectly. And `q` correlates +0.92 with `h`, so "the learned value beats
+the heuristic by 2%" mostly means "the search beats the heuristic, and the network partly captures
+that". Which is worth saying plainly, because the number alone reads like a stronger claim.
+
+So what this value head is: **not a better evaluator than the search, a faster one** — one forward
+pass in place of 300 iterations. That is the useful thing, and it is what AlphaZero's value head is
+for. It is not evidence that the features permit exceeding search quality.
+
+Two consequences. `q` at λ=1 is a distillation target, so it caps the network at search strength —
+escaping that needs the outcome to carry more weight, which needs more games. And the obvious next
+target is the genuinely MuZero-shaped one, not tried here: bootstrap from the search value *n moves
+later* rather than at the same position, which mixes in real played-out consequence instead of
+re-reading the same evaluation.

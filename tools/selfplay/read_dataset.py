@@ -21,7 +21,8 @@ import numpy as np
 class Dataset:
     x: np.ndarray
     pi: np.ndarray
-    z: np.ndarray
+    z: np.ndarray  # the game's outcome: one label per game, shared by all its positions
+    q: np.ndarray  # the search's estimate at that position: varies row by row
     h: np.ndarray  # the hand-written heuristic's value, for a baseline
     meta: np.ndarray  # (N, 3): game, move, seat
     sidecar: dict
@@ -36,10 +37,26 @@ def load(directory: str | Path) -> Dataset:
     sidecar = json.loads((d / "dataset.json").read_text())
     rows, f, p = sidecar["rows"], sidecar["featureSize"], sidecar["policySize"]
 
+    def column(name: str, optional: bool = False) -> np.ndarray:
+        """A `float32` column, or zeros if the dataset predates it.
+
+        Columns get added over time and datasets are large enough that regenerating one to read it is
+        a real cost. Absent is not corrupt -- zeros, and let the caller notice. A missing key here
+        would otherwise surface as a bare `KeyError` on a letter, which says nothing about what is
+        actually wrong or what to do about it.
+        """
+        file = sidecar["files"].get(name)
+        if file is None:
+            if not optional:
+                raise KeyError(f"dataset at {d} has no {name!r} column")
+            return np.zeros(rows, dtype="<f4")
+        return np.fromfile(d / file, dtype="<f4")
+
     x = np.fromfile(d / sidecar["files"]["x"], dtype="<f4").reshape(rows, f)
     pi = np.fromfile(d / sidecar["files"]["pi"], dtype="<f4").reshape(rows, p)
-    z = np.fromfile(d / sidecar["files"]["z"], dtype="<f4")
-    h = np.fromfile(d / sidecar["files"]["h"], dtype="<f4")
+    z = column("z")
+    q = column("q", optional=True)
+    h = column("h", optional=True)
     meta = np.fromfile(d / sidecar["files"]["meta"], dtype="<i4").reshape(rows, 3)
 
     # Shapes are asserted rather than trusted: a layout change on the TypeScript side would otherwise
@@ -50,7 +67,7 @@ def load(directory: str | Path) -> Dataset:
     assert np.isfinite(x).all(), "features contain NaN or inf"
     assert np.allclose(pi.sum(axis=1), 1.0, atol=1e-4), "policy rows do not sum to 1"
 
-    return Dataset(x=x, pi=pi, z=z, h=h, meta=meta, sidecar=sidecar)
+    return Dataset(x=x, pi=pi, z=z, q=q, h=h, meta=meta, sidecar=sidecar)
 
 
 if __name__ == "__main__":
