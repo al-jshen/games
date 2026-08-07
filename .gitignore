@@ -29,3 +29,8 @@ blob-report/
 
 # Generated self-play datasets. Large, reproducible from a seed, and not source.
 .data/
+
+# Session transcripts pasted in for context. Scratch, not source -- and `git add -A` will
+# happily commit 90KB of them if nothing says otherwise. It already did once.
+splendorcontext.txt
+*context.txt
