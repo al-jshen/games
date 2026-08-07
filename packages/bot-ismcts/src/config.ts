@@ -69,7 +69,12 @@ export interface SearchConfig {
    *
    * UCB's constant assumes rewards spread across roughly [0, 1]. A heuristic that returns everything
    * in a narrow band leaves exploration swamping value, and the search degenerates toward uniform.
-   * MuZero normalises against observed min/max for the same reason.
+   *
+   * MuZero rescales Q against the min and max observed in the tree, which is the same mechanism —
+   * but for the opposite complaint, and its reasoning does not transfer. It is fixing values that
+   * are *unbounded*, and says so of the case we are actually in: "In two-player zero sum games the
+   * value functions are assumed to be bounded within the [0,1] interval." The justification here is
+   * the narrow band, and it stands on the A/B result below rather than on that paper.
    */
   normaliseValues: boolean;
 
