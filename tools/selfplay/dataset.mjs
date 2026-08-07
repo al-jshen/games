@@ -14,6 +14,7 @@
  *   x   the encoded view, from the mover's point of view
  *   pi  the search's visit counts over the policy space, normalised
  *   z   how the game turned out for that player: +1, -1, or 0
+ *   h   what the hand-written heuristic thought at the time, so a learned value has a baseline
  *
  * Plus `meta`, three int32s per row — game, move number, seat. That exists so a suspicious row can be
  * looked at: the game index maps to a seed in the sidecar, and the seed and move number are enough to
@@ -34,6 +35,7 @@ export function sidecarFor({ rows, featureSize, policySize, seeds, featureLayout
       x: 'x.f32',
       pi: 'pi.f32',
       z: 'z.f32',
+      h: 'h.f32',
       meta: 'meta.i32',
     },
     meta: ['game', 'move', 'seat'],
@@ -55,12 +57,14 @@ export async function writeDataset(
   const x = new Float32Array(rows * featureSize);
   const pi = new Float32Array(rows * policySize);
   const z = new Float32Array(rows);
+  const h = new Float32Array(rows);
   const meta = new Int32Array(rows * 3);
 
   for (const [i, sample] of samples.entries()) {
     x.set(sample.x, i * featureSize);
     pi.set(sample.pi, i * policySize);
     z[i] = sample.z;
+    h[i] = sample.h ?? 0;
     meta[i * 3] = sample.game;
     meta[i * 3 + 1] = sample.move;
     meta[i * 3 + 2] = sample.seat;
@@ -70,6 +74,7 @@ export async function writeDataset(
     writeFile(join(dir, 'x.f32'), Buffer.from(x.buffer, x.byteOffset, x.byteLength)),
     writeFile(join(dir, 'pi.f32'), Buffer.from(pi.buffer, pi.byteOffset, pi.byteLength)),
     writeFile(join(dir, 'z.f32'), Buffer.from(z.buffer, z.byteOffset, z.byteLength)),
+    writeFile(join(dir, 'h.f32'), Buffer.from(h.buffer, h.byteOffset, h.byteLength)),
     writeFile(join(dir, 'meta.i32'), Buffer.from(meta.buffer, meta.byteOffset, meta.byteLength)),
   ]);
 
@@ -99,6 +104,7 @@ export async function readDataset(dir) {
     x: await load(sidecar.files.x, Float32Array),
     pi: await load(sidecar.files.pi, Float32Array),
     z: await load(sidecar.files.z, Float32Array),
+    h: await load(sidecar.files.h, Float32Array),
     meta: await load(sidecar.files.meta, Int32Array),
   };
 }

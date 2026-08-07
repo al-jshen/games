@@ -22,6 +22,7 @@ class Dataset:
     x: np.ndarray
     pi: np.ndarray
     z: np.ndarray
+    h: np.ndarray  # the hand-written heuristic's value, for a baseline
     meta: np.ndarray  # (N, 3): game, move, seat
     sidecar: dict
 
@@ -38,6 +39,7 @@ def load(directory: str | Path) -> Dataset:
     x = np.fromfile(d / sidecar["files"]["x"], dtype="<f4").reshape(rows, f)
     pi = np.fromfile(d / sidecar["files"]["pi"], dtype="<f4").reshape(rows, p)
     z = np.fromfile(d / sidecar["files"]["z"], dtype="<f4")
+    h = np.fromfile(d / sidecar["files"]["h"], dtype="<f4")
     meta = np.fromfile(d / sidecar["files"]["meta"], dtype="<i4").reshape(rows, 3)
 
     # Shapes are asserted rather than trusted: a layout change on the TypeScript side would otherwise
@@ -48,7 +50,7 @@ def load(directory: str | Path) -> Dataset:
     assert np.isfinite(x).all(), "features contain NaN or inf"
     assert np.allclose(pi.sum(axis=1), 1.0, atol=1e-4), "policy rows do not sum to 1"
 
-    return Dataset(x=x, pi=pi, z=z, meta=meta, sidecar=sidecar)
+    return Dataset(x=x, pi=pi, z=z, h=h, meta=meta, sidecar=sidecar)
 
 
 if __name__ == "__main__":

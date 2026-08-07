@@ -54,6 +54,12 @@ function ismctsPlayer(config, record) {
         samples.push({
           x: encodeView(view, seat),
           pi: visitsToPolicy(result.ranking),
+          /*
+           * The hand-written evaluation's own opinion of this position, recorded so a learned value
+           * has something to be measured against. Without a baseline "the loss went down" says
+           * nothing about whether the network is worth having.
+           */
+          h: evaluate(determinize(view, seat, new RandomCursor(`h:${config.seed}:${move}`, 0)), seat),
           seat,
           move: move - 1,
           // Filled in once the game ends; a position's worth is not known until then.
