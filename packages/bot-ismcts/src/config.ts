@@ -84,6 +84,44 @@ export interface SearchConfig {
    */
   normaliseValues: boolean;
 
+  /**
+   * How a child is chosen once the tree has been walked into.
+   *
+   * `ucb1` is what this search has always done: score by mean value plus an exploration bonus that
+   * depends only on how often an action has been tried. It has no opinion about a move it has never
+   * tried, which is why `descend` has to expand every legal action once, uniformly at random, before
+   * `select` runs at all. Measured cost of that: at a position with 48 legal moves and 300
+   * iterations, 48 of them go on random expansion and the resulting visit distribution has an
+   * effective support of 45.9 moves. The search never gets far enough to have an opinion.
+   *
+   * `puct` scores unvisited actions too, by weighting the exploration term with a prior from a
+   * policy network -- `Q + c·P·√ΣN/(1+N)`, finite at `N = 0`. A move nothing recommended can simply
+   * never be expanded, which is what lets the budget concentrate.
+   *
+   * Under `ucb1` the policy network is never consulted, and `deps.priors` may be absent. That is the
+   * point of the toggle: one search, one measurement at a time.
+   */
+  selection: 'ucb1' | 'puct';
+  /**
+   * PUCT's exploration constant, the `c` in `Q + c·P·√ΣN/(1+N)`.
+   *
+   * Separate from `exploration` because the two terms are on different scales and share nothing but
+   * a name -- UCB1's multiplies `√(log a / n)`, PUCT's multiplies `P·√ΣN/(1+n)`. Tuning one to the
+   * other's value would be a coincidence. 1.5 is the value Tian et al. inferred for AlphaGo Zero,
+   * which is a starting point and not a measurement of this game.
+   */
+  puctExploration: number;
+  /**
+   * How deep priors are used, counting the root as 0. Beyond it, `ucb1`.
+   *
+   * A knob because priors are not free: they cost a forward pass per node, and until the policy and
+   * value heads share a trunk that is a second network call on top of the leaf evaluation. At depth
+   * 0 it is one call per *move* rather than one per iteration -- ~4% overhead -- and the root is
+   * where the waste is worst, since it has the most legal moves and the most iterations to squander
+   * on them. So the cheap experiment and the full one are the same code path with a different number.
+   */
+  puctDepth: number;
+
   /** Seeds the search's own randomness, so a run reproduces exactly. */
   seed: string;
 }
@@ -100,6 +138,9 @@ export const BASELINE: SearchConfig = {
   commonRandomNumbers: false,
   worldPool: 32,
   normaliseValues: false,
+  selection: 'ucb1',
+  puctExploration: 1.5,
+  puctDepth: 99,
   seed: 'ismcts',
 };
 

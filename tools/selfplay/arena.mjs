@@ -43,7 +43,7 @@ const LABEL_B = flag('label-b', 'B');
  * JSON patch over the tuned defaults -- so a matchup is written as the difference between the two
  * sides rather than as two full configurations, which is how it is actually thought about.
  */
-function parsePlayer(spec, net) {
+function parsePlayer(spec, net, policy) {
   if (spec === 'random') return (seed) => ({ kind: 'random', seed });
   const base = spec === 'baseline' ? BASELINE : DEFAULT_CONFIG;
   const overrides = spec === 'baseline' || spec === 'default' ? {} : JSON.parse(spec);
@@ -54,7 +54,14 @@ function parsePlayer(spec, net) {
    * a legitimate configuration and it is never the one anybody means, so it has to be asked for.
    */
   if (net && overrides.leaf === undefined) overrides.leaf = 'evaluate';
-  return (seed) => ({ kind: 'ismcts', config: { ...base, iterations: ITERATIONS, ...overrides, seed }, net });
+  // A policy net is only ever wanted for its priors, and priors are only read under `puct`.
+  if (policy && overrides.selection === undefined) overrides.selection = 'puct';
+  return (seed) => ({
+    kind: 'ismcts',
+    config: { ...base, iterations: ITERATIONS, ...overrides, seed },
+    net,
+    policy,
+  });
 }
 
 /**
@@ -107,18 +114,22 @@ function buildJobs(makeA, makeB) {
 
 const NET_A = flag('a-net', null);
 const NET_B = flag('b-net', null);
-const makeA = parsePlayer(flag('a', 'default'), NET_A);
-const makeB = parsePlayer(flag('b', 'default'), NET_B);
+const POLICY_A = flag('a-policy', null);
+const POLICY_B = flag('b-policy', null);
+const makeA = parsePlayer(flag('a', 'default'), NET_A, POLICY_A);
+const makeB = parsePlayer(flag('b', 'default'), NET_B, POLICY_B);
 const jobs = buildJobs(makeA, makeB);
 
-const describe = (spec, net, make) => {
+const describe = (spec, net, policy, make) => {
   const { config } = make('x');
-  return `${spec}${net ? `  net=${net}` : ''}  leaf=${config.leaf} iterations=${config.iterations}`;
+  const puct = config.selection === 'puct' ? ` puctDepth=${config.puctDepth} c=${config.puctExploration}` : '';
+  return `${spec}${net ? `  net=${net}` : ''}${policy ? `  policy=${policy}` : ''}` +
+    `  leaf=${config.leaf} select=${config.selection}${puct} iterations=${config.iterations}`;
 };
 console.log(`Arena — ${LABEL_A} vs ${LABEL_B}`);
 console.log(`  ${PAIRS} deals played both ways = ${jobs.length} games, ${WORKERS} workers`);
-console.log(`  A: ${describe(flag('a', 'default'), NET_A, makeA)}`);
-console.log(`  B: ${describe(flag('b', 'default'), NET_B, makeB)}\n`);
+console.log(`  A: ${describe(flag('a', 'default'), NET_A, POLICY_A, makeA)}`);
+console.log(`  B: ${describe(flag('b', 'default'), NET_B, POLICY_B, makeB)}\n`);
 
 let winsA = 0;
 let winsB = 0;

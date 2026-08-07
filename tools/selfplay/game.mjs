@@ -15,6 +15,7 @@ import splendorDuel, {
   rolloutPreference,
   sampleAction,
   visitsToPolicy,
+  actionToIndex,
 } from '@games/splendor-duel';
 import { forward, loadNet } from './net.mjs';
 
@@ -46,14 +47,59 @@ export const deps = {
  * on every game would be pure overhead for a file that never changes mid-run.
  */
 const nets = new Map();
-export function depsWithNet(path) {
+const cachedNet = (path) => {
   let net = nets.get(path);
   if (net === undefined) {
     net = loadNet(path);
     nets.set(path, net);
   }
+  return net;
+};
+
+/**
+ * Priors over the legal actions, from the policy head, for PUCT.
+ *
+ * Two things happen here that the network cannot do for itself.
+ *
+ * The softmax is over the *legal* slots only, which is what makes the network's leaked probability
+ * mass on impossible moves harmless -- 0.35 nats of its held-out error, and every bit of it
+ * renormalised away here. The search knows the legal moves; the network never had to.
+ *
+ * And the action-to-slot map is deliberately many-to-one -- which gold you substitute, which token
+ * you take when reserving -- so several legal actions can land in one slot. That slot's probability
+ * is the group's, since the training target summed their visit counts to build it, so it is split
+ * evenly back among them. Giving each the full value instead would inflate a group purely for being
+ * large.
+ */
+function policyPriors(net) {
+  return (state, actor, actions) => {
+    const logits = forward(net, encodeView(redactFor(actor, state), actor));
+    const slots = actions.map((a) => actionToIndex(a));
+
+    const shared = new Map();
+    let max = -Infinity;
+    for (const slot of slots) {
+      shared.set(slot, (shared.get(slot) ?? 0) + 1);
+      if (logits[slot] > max) max = logits[slot];
+    }
+    // Subtract the max before exponentiating: without it a confident logit overflows to Infinity and
+    // every prior comes back NaN, which PUCT would silently turn into "never select anything".
+    let total = 0;
+    const weight = new Map();
+    for (const slot of shared.keys()) {
+      const w = Math.exp((logits[slot] - max) / net.temperature);
+      weight.set(slot, w);
+      total += w;
+    }
+    return slots.map((slot) => weight.get(slot) / total / shared.get(slot));
+  };
+}
+
+export function depsWithNet(path, policyPath) {
+  const net = cachedNet(path);
   return {
     ...deps,
+    ...(policyPath ? { priors: policyPriors(cachedNet(policyPath)) } : {}),
     /*
      * Re-redacted at every leaf, deliberately. The state inside the tree is a *determinized* world
      * with hidden information sampled, and the network was trained on redacted views -- so handing
@@ -97,8 +143,8 @@ function pickAction(ranking, moveNumber, explore, rng) {
   return ranking[ranking.length - 1].action;
 }
 
-function ismctsPlayer(config, record, netPath, explore) {
-  const searchDeps = netPath ? depsWithNet(netPath) : deps;
+function ismctsPlayer(config, record, netPath, explore, policyPath) {
+  const searchDeps = netPath ? depsWithNet(netPath, policyPath) : deps;
   // Seeded off the player's own seed, so a generation run stays reproducible move for move.
   const exploreRng = explore ? new RandomCursor(`explore:${config.seed}`, 0) : null;
   let move = 0;
@@ -170,7 +216,7 @@ function randomPlayer(seed) {
 export function makePlayer(spec, record = false) {
   return spec.kind === 'random'
     ? randomPlayer(spec.seed)
-    : ismctsPlayer(spec.config, record, spec.net, spec.explore);
+    : ismctsPlayer(spec.config, record, spec.net, spec.explore, spec.policy);
 }
 
 /**

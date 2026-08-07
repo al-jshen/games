@@ -42,6 +42,14 @@ export interface SearchDeps<S, A, V, O> {
    * is where it says so.
    */
   sampleAction?: (state: S, seat: Seat, rng: RandomCursor) => A | null;
+  /**
+   * A prior over `actions`, in that order, summing to 1. Required by `selection: 'puct'` and never
+   * called otherwise.
+   *
+   * A dependency rather than something the search computes, for the same reason `evaluate` is: the
+   * search knows nothing about this game, and a policy head is as game-specific as an evaluation.
+   */
+  priors?: (state: S, seat: Seat, actions: readonly A[]) => readonly number[];
 }
 
 interface Node<A> {
@@ -52,11 +60,26 @@ interface Node<A> {
   /** How often each action was legal in a sampled world that reached here. See the note above. */
   available: Map<string, number>;
   actions: Map<string, A>;
+  /**
+   * Policy priors, filled once on first arrival and never recomputed. Empty under `ucb1`.
+   *
+   * Once, because a node here is not a position. The tree is keyed by action sequence and the state
+   * is re-derived each iteration from a fresh determinization, so asking the policy head twice at the
+   * same node gives two answers -- the cards revealed along the path depend on which world was drawn.
+   * AlphaZero never meets this: its nodes *are* positions. Caching the first world's answer is the
+   * cheap approximation, and defensible for the same reason the priors are approximate anyway: they
+   * only have to order moves better than uniform, and the search corrects them from there.
+   *
+   * A world reaching this node later may offer an action the first world did not. Those get the mean
+   * of the known priors -- neither favoured nor starved -- rather than zero, which would bar them.
+   */
+  prior: Map<string, number>;
 }
 
 const newNode = <A>(): Node<A> => ({
   total: 0,
   visits: 0,
+  prior: new Map(),
   children: new Map(),
   available: new Map(),
   actions: new Map(),
@@ -184,21 +207,52 @@ function descend<S, A, V, O>(
     if (!node.actions.has(k)) node.actions.set(k, actions[i] as A);
   }
 
-  const untried = keys.filter((k) => !node.children.has(k));
-  let chosen: string;
-  if (untried.length > 0) {
-    chosen = untried[rng.int(untried.length)] as string;
-    node.children.set(chosen, newNode<A>());
-    const child = node.children.get(chosen) as Node<A>;
-    const next = applyOrThrow(mod, state, actor, node.actions.get(chosen) as A);
-    const value = leafValue(deps, next, seat, config, rng);
-    noteValue(value);
-    backup(child, value);
-    backup(node, value);
-    return value;
+  const usePriors = config.selection === 'puct' && depth <= config.puctDepth && deps.priors !== undefined;
+  if (usePriors && node.prior.size === 0) {
+    // Once per node, from whichever world got here first. See the note on `Node.prior`.
+    const p = (deps.priors as NonNullable<typeof deps.priors>)(state, actor, actions);
+    for (const [i, k] of keys.entries()) node.prior.set(k, p[i] ?? 0);
   }
 
-  chosen = select(node, keys, config, actor === seat);
+  /*
+   * Under UCB1 an untried action has no score -- the exploration term divides by a visit count of
+   * zero -- so every one of them has to be expanded before `select` can rank anything, and which
+   * goes first is a coin toss. At 48 legal moves that is 48 iterations of random play before the
+   * search forms any opinion at all.
+   *
+   * PUCT scores them, because `c·P·√ΣN/(1+N)` is perfectly finite at `N = 0`. So there is no
+   * expansion phase to separate out: the untried actions compete with the tried ones on the same
+   * scale, and one gets expanded only when the prior says it is worth a look. That is the whole
+   * mechanism, and skipping it would be implementing the formula without the point of it.
+   */
+  let chosen: string;
+  if (!usePriors) {
+    const untried = keys.filter((k) => !node.children.has(k));
+    if (untried.length > 0) {
+      chosen = untried[rng.int(untried.length)] as string;
+      node.children.set(chosen, newNode<A>());
+      const child = node.children.get(chosen) as Node<A>;
+      const next = applyOrThrow(mod, state, actor, node.actions.get(chosen) as A);
+      const value = leafValue(deps, next, seat, config, rng);
+      noteValue(value);
+      backup(child, value);
+      backup(node, value);
+      return value;
+    }
+    chosen = select(node, keys, config, actor === seat);
+  } else {
+    chosen = selectPuct(node, keys, config, actor === seat);
+    if (!node.children.has(chosen)) {
+      node.children.set(chosen, newNode<A>());
+      const child = node.children.get(chosen) as Node<A>;
+      const next = applyOrThrow(mod, state, actor, node.actions.get(chosen) as A);
+      const value = leafValue(deps, next, seat, config, rng);
+      noteValue(value);
+      backup(child, value);
+      backup(node, value);
+      return value;
+    }
+  }
   const next = applyOrThrow(mod, state, actor, node.actions.get(chosen) as A);
   const child = node.children.get(chosen) as Node<A>;
   const value = descend(deps, next, seat, child, config, rng, depth + 1, noteValue);
@@ -240,6 +294,65 @@ function select<A>(node: Node<A>, keys: string[], config: SearchConfig, ours: bo
     const mean = child.total / child.visits;
     const oriented = ours ? mean : -mean;
     const score = rescale(oriented) + config.exploration * Math.sqrt(Math.log(availability) / child.visits);
+    if (score > bestScore) {
+      bestScore = score;
+      bestKey = k;
+    }
+  }
+  return bestKey;
+}
+
+/**
+ * `Q + c·P·√ΣN/(1+N)`, over every action legal in this world -- expanded or not.
+ *
+ * Two departures from AlphaZero, both forced by determinization.
+ *
+ * `√ΣN` is the availability count, not the parent's visit count. Different sampled worlds offer
+ * different actions, so a move that has been available ten times and tried twice has been rejected
+ * eight times, while one available twice and tried twice has been rejected never -- and the parent's
+ * total visits cannot tell them apart. It is the same substitution UCB1 makes here, for the same
+ * reason, and it has no precedent I could find because PUCT under determinization has not been
+ * written up. It is a guess with an arena attached.
+ *
+ * An unvisited child scores `Q = 0`, which `rescale` puts at the midpoint -- neither promising nor
+ * discouraging. Leela reduces it below the parent's value ("first play urgency") to stop the search
+ * wandering off a good line; that is a tuning question for once this is known to work at all.
+ */
+function selectPuct<A>(node: Node<A>, keys: string[], config: SearchConfig, ours: boolean): string {
+  let bestKey = keys[0] as string;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  let lo = 0;
+  let hi = 1;
+  if (config.normaliseValues) {
+    const means = keys
+      .map((k) => node.children.get(k))
+      .filter((c): c is Node<A> => Boolean(c) && (c as Node<A>).visits > 0)
+      .map((c) => c.total / c.visits);
+    if (means.length > 1) {
+      lo = Math.min(...means);
+      hi = Math.max(...means);
+    }
+  }
+  const rescale = (v: number) => {
+    if (!config.normaliseValues || hi - lo < 1e-9) return (v + 1) / 2;
+    return (v - lo) / (hi - lo);
+  };
+
+  // Actions this node first met in a different world have no prior; the mean keeps them in play
+  // without favouring them. Zero would bar them from ever being expanded.
+  let priorSum = 0;
+  for (const k of keys) priorSum += node.prior.get(k) ?? 0;
+  const fallback = node.prior.size > 0 ? priorSum / node.prior.size : 1 / keys.length;
+
+  for (const k of keys) {
+    const child = node.children.get(k);
+    const visits = child?.visits ?? 0;
+    const availability = node.available.get(k) ?? 1;
+    const mean = child && child.visits > 0 ? child.total / child.visits : 0;
+    const oriented = ours ? mean : -mean;
+    const prior = node.prior.get(k) ?? fallback;
+    const score = rescale(oriented) + config.puctExploration * prior * (Math.sqrt(availability) / (1 + visits));
     if (score > bestScore) {
       bestScore = score;
       bestKey = k;
