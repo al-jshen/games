@@ -29,7 +29,8 @@
     "clean": "rm -rf packages/*/dist packages/games/*/dist apps/*/dist tools/*/dist apps/web/dist *.tsbuildinfo",
     "test:e2e": "playwright test",
     "bench": "npm run -w @games/tool-bench start",
-    "selfplay": "npm run -w @games/tool-selfplay start --"
+    "selfplay": "npm run -w @games/tool-selfplay start --",
+    "selfplay:generate": "npm run -w @games/tool-selfplay generate --"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

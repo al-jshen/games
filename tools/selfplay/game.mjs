@@ -9,10 +9,12 @@ import { RandomCursor } from '@games/engine';
 import { measureDisagreement, search } from '@games/bot-ismcts';
 import splendorDuel, {
   determinize,
+  encodeView,
   evaluate,
   redactFor,
   rolloutPreference,
   sampleAction,
+  visitsToPolicy,
 } from '@games/splendor-duel';
 
 /** Self-play must terminate. The official rules do not guarantee it, so the house rule goes on. */
@@ -31,15 +33,33 @@ export const deps = {
   },
 };
 
-function ismctsPlayer(config) {
+function ismctsPlayer(config, record) {
   let move = 0;
   const stats = { disagreement: [], noiseFloor: [], valueSpan: [] };
+  /*
+   * Recorded here rather than reconstructed later, because the training target is the *search's*
+   * visit distribution and that exists only at the moment of choosing. Replaying the game afterwards
+   * would recover the moves but not the search's opinion of the alternatives, which is the whole
+   * signal.
+   */
+  const samples = [];
   return {
     stats,
+    samples,
     choose(state, seat) {
       const view = JSON.parse(JSON.stringify(redactFor(seat, state)));
       // A fresh seed per move: reuse one for a whole game and every search samples the same worlds.
       const result = search(deps, view, seat, { ...config, seed: `${config.seed}:${move++}` });
+      if (record) {
+        samples.push({
+          x: encodeView(view, seat),
+          pi: visitsToPolicy(result.ranking),
+          seat,
+          move: move - 1,
+          // Filled in once the game ends; a position's worth is not known until then.
+          z: 0,
+        });
+      }
       stats.valueSpan.push(result.valueRange.max - result.valueRange.min);
       // Expensive -- a separate search per world -- so only sampled occasionally.
       if (config.measureDisagreement && move % 12 === 0) {
@@ -56,6 +76,7 @@ function randomPlayer(seed) {
   const rng = new RandomCursor(seed, 0);
   return {
     stats: null,
+    samples: [],
     choose(state, seat) {
       const { actions } = splendorDuel.legalActions(state, seat);
       return actions[rng.int(actions.length)];
@@ -64,8 +85,8 @@ function randomPlayer(seed) {
 }
 
 /** Build a player from a plain description, so a whole matchup can cross a worker boundary. */
-export function makePlayer(spec) {
-  return spec.kind === 'random' ? randomPlayer(spec.seed) : ismctsPlayer(spec.config);
+export function makePlayer(spec, record = false) {
+  return spec.kind === 'random' ? randomPlayer(spec.seed) : ismctsPlayer(spec.config, record);
 }
 
 /**
@@ -75,8 +96,8 @@ export function makePlayer(spec) {
  * that did not swap would mostly measure who drew seat zero.
  */
 export function playGame(job) {
-  const a = makePlayer(job.a);
-  const b = makePlayer(job.b);
+  const a = makePlayer(job.a, job.record);
+  const b = makePlayer(job.b, job.record);
   const players = job.aFirst ? [a, b] : [b, a];
 
   let state = splendorDuel.setup({ seed: job.seed, seats: [0, 1], options: OPTIONS });
@@ -104,10 +125,26 @@ export function playGame(job) {
     collected.valueSpan.push(...player.stats.valueSpan);
   }
 
+  /*
+   * A position is worth what the game turned out to be worth to whoever was about to move. Filled in
+   * only now, because that is the first moment it is known.
+   */
+  const samples = [];
+  if (job.record) {
+    for (const player of [a, b]) {
+      for (const sample of player.samples) {
+        sample.z = winner === null ? 0 : winner === sample.seat ? 1 : -1;
+        sample.game = job.gameIndex ?? 0;
+        samples.push(sample);
+      }
+    }
+  }
+
   return {
     moves,
     // `null` for a draw or a stall; otherwise did A win?
     aWon: winner === null ? null : (winner === 0) === job.aFirst,
     collected,
+    samples,
   };
 }

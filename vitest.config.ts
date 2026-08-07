@@ -18,7 +18,13 @@ export default defineConfig({
     ],
   },
   test: {
-    include: ['packages/**/test/**/*.test.{ts,tsx}', 'apps/**/test/**/*.test.{ts,tsx}'],
+    include: [
+      'packages/**/test/**/*.test.{ts,tsx}',
+      'apps/**/test/**/*.test.{ts,tsx}',
+      // The self-play tooling is plain JS, but the dataset format is a contract with the trainer and
+      // wants the same protection as anything else.
+      'tools/**/test/**/*.test.mjs',
+    ],
     // Property tests over full random playthroughs are the slowest thing here.
     testTimeout: 60_000,
     hookTimeout: 60_000,

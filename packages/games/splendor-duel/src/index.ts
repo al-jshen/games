@@ -72,5 +72,7 @@ export { apply } from './apply.js';
 export { applyToView, legalActionsFromView } from './predict.js';
 export { determinize } from './determinize.js';
 export { sampleAction } from './sample.js';
+export { encodeView, FEATURE_SIZE, FEATURE_LAYOUT } from './encode.js';
+export { actionToIndex, policyMask, visitsToPolicy, POLICY_SIZE, POLICY_LAYOUT } from './policy.js';
 export { evaluate, raceProgress, rolloutPreference, DEFAULT_WEIGHTS, type EvalWeights } from './evaluate.js';
 export { zSplendorAction, zSplendorOptions } from './schema.js';
