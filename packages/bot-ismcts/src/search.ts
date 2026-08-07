@@ -314,9 +314,19 @@ function select<A>(node: Node<A>, keys: string[], config: SearchConfig, ours: bo
  * reason, and it has no precedent I could find because PUCT under determinization has not been
  * written up. It is a guess with an arena attached.
  *
- * An unvisited child scores `Q = 0`, which `rescale` puts at the midpoint -- neither promising nor
- * discouraging. Leela reduces it below the parent's value ("first play urgency") to stop the search
- * wandering off a good line; that is a tuning question for once this is known to work at all.
+ * An unvisited child is scored at the parent's own value -- "this looks about as good as here until
+ * shown otherwise" -- rather than at a nominal `Q = 0`.
+ *
+ * The first version did use 0, on the reasoning that AlphaZero does and that `rescale` maps it to
+ * the midpoint. It does not, once `normaliseValues` is on. That rescales against the *observed range
+ * of sibling means*, and this value network reports root positions in a narrow band around zero:
+ * measured, `[-0.005, 0.136]` after 1232 iterations. Stretching that to fill [0, 1] puts a nominal
+ * zero at 0.04 -- near the bottom -- so an unvisited child began 0.96 behind the best sibling while
+ * its whole exploration bonus was 0.68. Moves the prior did not favour were not merely deprioritised,
+ * they were unreachable, and PUCT lost 30-90 while looking like it was concentrating nicely.
+ *
+ * Leela subtracts a further constant from the parent's value to keep the search from wandering off a
+ * good line. That is a tuning dimension, and one worth having once this is known to work at all.
  */
 function selectPuct<A>(node: Node<A>, keys: string[], config: SearchConfig, ours: boolean): string {
   let bestKey = keys[0] as string;
@@ -345,14 +355,18 @@ function selectPuct<A>(node: Node<A>, keys: string[], config: SearchConfig, ours
   for (const k of keys) priorSum += node.prior.get(k) ?? 0;
   const fallback = node.prior.size > 0 ? priorSum / node.prior.size : 1 / keys.length;
 
+  // First play urgency, on the rescaled scale so it cannot land outside it. The parent's own value
+  // is the honest prior belief about a child nobody has looked at; 0.5 when there is not one yet.
+  const parentMean = node.visits > 0 ? node.total / node.visits : null;
+  const fpu = parentMean === null ? 0.5 : Math.min(1, Math.max(0, rescale(ours ? parentMean : -parentMean)));
+
   for (const k of keys) {
     const child = node.children.get(k);
     const visits = child?.visits ?? 0;
     const availability = node.available.get(k) ?? 1;
-    const mean = child && child.visits > 0 ? child.total / child.visits : 0;
-    const oriented = ours ? mean : -mean;
     const prior = node.prior.get(k) ?? fallback;
-    const score = rescale(oriented) + config.puctExploration * prior * (Math.sqrt(availability) / (1 + visits));
+    const value = visits > 0 ? rescale(ours ? child!.total / visits : -(child!.total / visits)) : fpu;
+    const score = value + config.puctExploration * prior * (Math.sqrt(availability) / (1 + visits));
     if (score > bestScore) {
       bestScore = score;
       bestKey = k;
