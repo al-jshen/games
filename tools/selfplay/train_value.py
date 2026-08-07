@@ -30,6 +30,7 @@ import torch
 from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
+from checkpoint import save  # noqa: E402
 from read_dataset import load  # noqa: E402
 
 torch.manual_seed(7)
@@ -165,10 +166,11 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        return model(x_test).squeeze(-1).cpu().numpy(), best_epoch
+        return model(x_test).squeeze(-1).cpu().numpy(), best_epoch, model
 
 
-def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40) -> int:
+def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
+         save_to: str | None = None) -> int:
     data = load(directory)
     train_mask, test_mask = split_by_game(data)
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
@@ -196,8 +198,9 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
     # The search's own estimate, scored as if it were a prediction. Worth seeing before using it as
     # a target: this is the ceiling for the part of the signal that comes from `q`.
     has_q = not np.allclose(data.q, 0)
+    search_q = None
     if has_q:
-        report("search value (q)", data.q[test_mask], z_test)
+        search_q = report("search value (q)", data.q[test_mask], z_test)
         # How much of `q` is just the heuristic wearing a hat. The search evaluates leaves with the
         # heuristic, so a blend that leans on `q` partly distils it -- worth knowing how much.
         print(f"  {'q vs heuristic':<22} corr {np.corrcoef(data.q, data.h)[0, 1]:+.3f}"
@@ -210,11 +213,14 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
     # unbiasedness for the search estimate's much lower variance.
     lambdas = [0.0, 0.3, 0.6, 1.0] if has_q else [0.0]
     results = {}
+    models = {}
     for kind in ("linear", "tiny", "mlp"):
         for lam in lambdas:
             target = (1 - lam) * z_train + lam * q_train
             started = time.monotonic()
-            pred, epoch = fit(kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch)
+            pred, epoch, models[(kind, lam)] = fit(
+                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch
+            )
             # The epoch is worth seeing next to the score: a best epoch equal to the budget means the
             # run was still improving when it ran out, and the number below is a floor, not a result.
             note = f"   (epoch {epoch}/{epochs}, {time.monotonic() - started:.0f}s)"
@@ -224,6 +230,20 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
 
     best_kind, best_lambda = min(results, key=lambda k: results[k]["mse"])
     best = results[(best_kind, best_lambda)]
+
+    if save_to:
+        # The sweep's whole output used to be printed text. Saving the winner is what turns it from a
+        # question answered into a thing the search can use -- and the losing eleven are worth nothing
+        # to anyone, so only the winner goes down.
+        save(
+            models[(best_kind, best_lambda)], save_to,
+            kind="value", architecture=best_kind, value_lambda=best_lambda,
+            features=int(data.x.shape[1]), trained_on=str(directory), games=int(games),
+            held_out=dict(best),
+            baselines={"heuristic": heuristic["mse"],
+                       "search_q": search_q["mse"] if search_q else None},
+        )
+        print(f"  Saved the winner to {save_to}/ -- {best_kind}, lambda={best_lambda:g}.\n")
 
     if has_q and best_lambda == 0:
         # The sweep ran and the outcome still won. Worth saying plainly -- a blend that did not help
@@ -290,5 +310,6 @@ if __name__ == "__main__":
     parser.add_argument("--device", help="cuda, cpu, ... (default: cuda when one is present)")
     parser.add_argument("--batch", type=int, default=8192, help="see fit() -- it was measured")
     parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--save", help="write the winning model here, for the search to load")
     args = parser.parse_args()
-    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs))
+    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs, args.save))

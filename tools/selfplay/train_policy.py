@@ -29,6 +29,7 @@ import torch
 from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
+from checkpoint import save  # noqa: E402
 from read_dataset import load  # noqa: E402
 from train_value import pick_device, resident, split_by_game  # noqa: E402
 
@@ -203,7 +204,8 @@ def split_test(meta_games: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return is_calibration, ~is_calibration
 
 
-def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40) -> int:
+def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
+         save_to: str | None = None) -> int:
     data = load(directory)
     train_mask, test_mask = split_by_game(data)
     slots = data.pi.shape[1]
@@ -239,6 +241,7 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
     scored = torch.from_numpy(np.flatnonzero(score_mask)).to(x_test.device)
 
     results = {}
+    models = {}
     for kind in ("linear", "tiny", "mlp", "wide"):
         started = time.monotonic()
         model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs, batch=batch)
@@ -248,6 +251,7 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
         tuned = evaluate(model, x_test[scored], pi_test[scored], temperature=temperature)
         note = f"   (epoch {epoch}/{epochs}, T {temperature:.2f}, {elapsed:.0f}s)"
         results[kind] = {**report(kind, tuned, floor, note), "at_one": at_one["ce"], "t": temperature}
+        models[kind] = model
     print()
 
     best_kind = min(results, key=lambda k: results[k]["ce"])
@@ -280,6 +284,20 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
     if results["wide"]["ce"] < results["mlp"]["ce"] < results["tiny"]["ce"]:
         print("  Capacity is still paying at every step of the ladder, so the largest model here is")
         print("  probably not the largest worth trying.")
+
+    if save_to:
+        # The temperature travels with the weights, because it is not a property of the experiment --
+        # it is part of the model. A checkpoint loaded without it is sharper than it has earned, and
+        # nothing downstream would notice: the ordering is identical, so it would look correct and
+        # quietly starve the moves the network was least sure about.
+        save(
+            models[best_kind], save_to,
+            kind="policy", architecture=best_kind, temperature=best["t"],
+            features=int(data.x.shape[1]), slots=int(slots), trained_on=str(directory),
+            held_out={k: v for k, v in best.items() if k != "t"},
+            baselines={"uniform_over_visited": uniform, "target_entropy": floor},
+        )
+        print(f"\n  Saved {best_kind} to {save_to}/, temperature {best['t']:.2f} included.")
     return 0
 
 
@@ -288,6 +306,9 @@ if __name__ == "__main__":
     parser.add_argument("directory", nargs="?", default=".data/gen0", help="a self-play dataset")
     parser.add_argument("--device", help="cuda, cpu, ... (default: cuda when one is present)")
     parser.add_argument("--batch", type=int, default=8192)
-    parser.add_argument("--epochs", type=int, default=40)
+    # 80 rather than the value trainer's 40: the policy models are still improving at 40, where the
+    # value ones have long stopped. Measured -- `wide` best-epoch was 76 of 80.
+    parser.add_argument("--epochs", type=int, default=80)
+    parser.add_argument("--save", help="write the winning model here, for the search to load")
     args = parser.parse_args()
-    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs))
+    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs, args.save))

@@ -137,9 +137,20 @@ const seconds = (Date.now() - started) / 1000;
 const score = (winsA + draws / 2) / jobs.length;
 const [lo, hi] = wilson(winsA + draws / 2, jobs.length);
 
+/*
+ * Both figures are from A's side, and both say so. The convention is universal and it is still not
+ * good enough here: a bare "score 0.0%" next to a line reading "random 0 - 12 ismcts" was misread as
+ * the search losing every game, which is the opposite of the result. A number meant to settle an
+ * argument should not need the reader to know whose side it is on.
+ */
 console.log(`  ${LABEL_A} ${winsA} — ${winsB} ${LABEL_B}${draws ? `, ${draws} drawn or stalled` : ''}`);
-console.log(`  score ${(score * 100).toFixed(1)}%   95% CI [${(lo * 100).toFixed(1)}%, ${(hi * 100).toFixed(1)}%]`);
-console.log(`  elo ${elo(score) >= 0 ? '+' : ''}${elo(score).toFixed(0)}   [${elo(lo).toFixed(0)}, ${elo(hi).toFixed(0)}]`);
+console.log(
+  `  ${LABEL_A} scores ${(score * 100).toFixed(1)}%   95% CI [${(lo * 100).toFixed(1)}%, ${(hi * 100).toFixed(1)}%]`,
+);
+console.log(
+  `  ${LABEL_A} elo ${elo(score) >= 0 ? '+' : ''}${elo(score).toFixed(0)} relative to ${LABEL_B}` +
+    `   [${elo(lo).toFixed(0)}, ${elo(hi).toFixed(0)}]`,
+);
 console.log(`  ${(moves / jobs.length).toFixed(0)} moves/game, ${seconds.toFixed(0)}s total\n`);
 
 /*
