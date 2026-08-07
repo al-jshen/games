@@ -23,7 +23,7 @@
  * floats and there is no way back to a board.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** Written beside the blobs so a reader can check it is reading what it thinks. */
@@ -49,12 +49,8 @@ export function sidecarFor({ rows, featureSize, policySize, seeds, featureLayout
   };
 }
 
-export async function writeDataset(
-  dir,
-  { samples, seeds, featureSize, policySize, featureLayout, policyLayout, config, generatedAt },
-) {
-  await mkdir(dir, { recursive: true });
-
+/** Pack rows into the six blobs, column by column. The one place that knows the row layout. */
+function pack(samples, featureSize, policySize) {
   const rows = samples.length;
   const x = new Float32Array(rows * featureSize);
   const pi = new Float32Array(rows * policySize);
@@ -73,28 +69,64 @@ export async function writeDataset(
     meta[i * 3 + 1] = sample.move;
     meta[i * 3 + 2] = sample.seat;
   }
+  return { x, pi, z, q, h, meta };
+}
 
-  await Promise.all([
-    writeFile(join(dir, 'x.f32'), Buffer.from(x.buffer, x.byteOffset, x.byteLength)),
-    writeFile(join(dir, 'pi.f32'), Buffer.from(pi.buffer, pi.byteOffset, pi.byteLength)),
-    writeFile(join(dir, 'z.f32'), Buffer.from(z.buffer, z.byteOffset, z.byteLength)),
-    writeFile(join(dir, 'q.f32'), Buffer.from(q.buffer, q.byteOffset, q.byteLength)),
-    writeFile(join(dir, 'h.f32'), Buffer.from(h.buffer, h.byteOffset, h.byteLength)),
-    writeFile(join(dir, 'meta.i32'), Buffer.from(meta.buffer, meta.byteOffset, meta.byteLength)),
-  ]);
+const bytes = (array) => Buffer.from(array.buffer, array.byteOffset, array.byteLength);
 
-  const sidecar = sidecarFor({
-    rows,
-    featureSize,
-    policySize,
-    seeds,
-    featureLayout,
-    policyLayout,
-    config,
-    generatedAt,
-  });
-  await writeFile(join(dir, 'dataset.json'), `${JSON.stringify(sidecar, null, 2)}\n`);
-  return sidecar;
+/**
+ * A dataset written incrementally, as games finish, rather than all at once at the end.
+ *
+ * Generation runs for hours and the obvious shape -- accumulate every row, write once -- loses the
+ * entire run to a single interruption. That is not hypothetical; it has already cost two runs here.
+ * Appending as games complete means an interrupted run leaves a shorter dataset that is completely
+ * valid rather than no dataset at all.
+ *
+ * The sidecar is rewritten as it goes, so `rows` always describes bytes that are actually on disk.
+ * It is written *after* the blobs it describes, because the failure that matters is a reader
+ * trusting a row count the files do not contain: a sidecar that lags the blobs truncates, which is
+ * safe, while one that leads them reads off the end into whatever comes next.
+ */
+export async function openDataset(dir, { featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt }) {
+  await mkdir(dir, { recursive: true });
+
+  const describe = (rows) =>
+    sidecarFor({ rows, featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt });
+  const names = describe(0).files;
+  const handles = Object.fromEntries(
+    await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await open(join(dir, name), 'w')])),
+  );
+
+  let rows = 0;
+  const writeSidecar = () => writeFile(join(dir, 'dataset.json'), `${JSON.stringify(describe(rows), null, 2)}\n`);
+  // A readable, empty dataset from the outset, so an early kill still leaves something coherent.
+  await writeSidecar();
+
+  return {
+    get rows() {
+      return rows;
+    },
+    async append(samples) {
+      if (samples.length === 0) return;
+      const packed = pack(samples, featureSize, policySize);
+      await Promise.all(Object.entries(packed).map(([key, array]) => handles[key].write(bytes(array))));
+      rows += samples.length;
+    },
+    /** Publish the rows appended so far. Cheap, but not free, so the caller chooses when. */
+    flush: writeSidecar,
+    async close() {
+      await writeSidecar();
+      await Promise.all(Object.values(handles).map((handle) => handle.close()));
+      return describe(rows);
+    },
+  };
+}
+
+/** Write a dataset in one go. Equivalent to opening one and appending everything. */
+export async function writeDataset(dir, { samples, ...meta }) {
+  const writer = await openDataset(dir, meta);
+  await writer.append(samples);
+  return writer.close();
 }
 
 /** Read a dataset back. Used by the tests, and by anything in Node that wants to inspect one. */

@@ -15,11 +15,27 @@ export function defaultWorkers() {
   return Math.max(1, Math.min(16, availableParallelism() - 1));
 }
 
-export async function runJobs(jobs, workerCount) {
-  if (workerCount <= 1) return jobs.map((job) => ({ ok: true, ...playGame(job) }));
+/**
+ * Run every job, optionally handing each result to `onResult` as it lands.
+ *
+ * With a callback the results are not retained, which is the point of having one: a long generation
+ * run holds a few hundred thousand rows of training data and there is no reason for the parent to
+ * keep any of it once it has been written. Results arrive in completion order, not job order --
+ * a caller that needs the original order should say so with the index it is given.
+ */
+export async function runJobs(jobs, workerCount, onResult) {
+  const results = new Array(onResult ? 0 : jobs.length);
+  const deliver = (result, index) => {
+    if (onResult) onResult(result, index);
+    else results[index] = result;
+  };
+
+  if (workerCount <= 1) {
+    jobs.forEach((job, index) => deliver({ ok: true, ...playGame(job) }, index));
+    return results;
+  }
 
   const url = fileURLToPath(new URL('./worker.mjs', import.meta.url));
-  const results = new Array(jobs.length);
   let next = 0;
 
   const workers = Array.from({ length: Math.min(workerCount, jobs.length) }, () => new Worker(url));
@@ -33,7 +49,7 @@ export async function runJobs(jobs, workerCount) {
               const index = next++;
               worker.once('message', (result) => {
                 if (!result.ok) return reject(new Error(result.message));
-                results[index] = result;
+                deliver(result, index);
                 take();
               });
               worker.postMessage(jobs[index]);

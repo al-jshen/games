@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FEATURE_SIZE, POLICY_SIZE } from '@games/splendor-duel';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readDataset, writeDataset } from '../dataset.mjs';
+import { openDataset, readDataset, writeDataset } from '../dataset.mjs';
 
 /**
  * The dataset format is a contract with a trainer written in another language, and the failure mode
@@ -95,6 +95,65 @@ describe('the training dataset', () => {
     const back = await readDataset(dir);
     expect(back.sidecar.seeds[back.meta[0]]).toBe('alpha');
     expect(back.sidecar.meta).toEqual(['game', 'move', 'seat']);
+  });
+
+  it('appends in pieces to exactly the bytes one write would have produced', async () => {
+    /*
+     * Generation appends a game at a time so an interrupted run still leaves a dataset. That is only
+     * safe if the pieces land in the same order and stride as the all-at-once path -- a per-chunk
+     * header, a padded write, a column written out of step, and the file still *looks* fine while
+     * reshaping into rows that belong to no position at all.
+     */
+    const samples = Array.from({ length: 40 }, (_, i) => sample(i));
+    const meta = {
+      seeds: ['s0'],
+      featureSize: FEATURE_SIZE,
+      policySize: POLICY_SIZE,
+      featureLayout: {},
+      policyLayout: {},
+      config: {},
+      generatedAt: 'now',
+    };
+
+    const chunked = join(dir, 'chunked');
+    const writer = await openDataset(chunked, meta);
+    for (let at = 0; at < samples.length; at += 7) await writer.append(samples.slice(at, at + 7));
+    const sidecar = await writer.close();
+
+    const oneShot = join(dir, 'one-shot');
+    await writeDataset(oneShot, { samples, ...meta });
+
+    expect(sidecar.rows).toBe(40);
+    const { readFileSync } = await import('node:fs');
+    for (const name of Object.values(sidecar.files)) {
+      expect(readFileSync(join(chunked, name))).toEqual(readFileSync(join(oneShot, name)));
+    }
+  });
+
+  it('never claims more rows than it has written', async () => {
+    /*
+     * The sidecar is what a reader trusts, and a killed run stops at an arbitrary moment. Claiming
+     * rows the blobs do not contain would have the trainer read off the end of the file, so the
+     * count has to lag the bytes rather than lead them.
+     */
+    const writer = await openDataset(dir, {
+      seeds: [],
+      featureSize: FEATURE_SIZE,
+      policySize: POLICY_SIZE,
+      featureLayout: {},
+      policyLayout: {},
+      config: {},
+      generatedAt: 'now',
+    });
+    await writer.append(Array.from({ length: 12 }, (_, i) => sample(i)));
+    await writer.flush();
+
+    // Read while it is still open, exactly as an onlooker would mid-run.
+    const back = await readDataset(dir);
+    expect(back.sidecar.rows).toBe(12);
+    expect(back.x).toHaveLength(12 * FEATURE_SIZE);
+    expect(back.z).toHaveLength(12);
+    await writer.close();
   });
 
   it('writes exactly the number of bytes the sidecar claims', async () => {
