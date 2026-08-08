@@ -143,10 +143,23 @@ export interface SearchConfig {
    * 3000-iteration reference over 150 positions went from 33-39% at every constant to 44% for `ucb1`
    * against 47-53% for `puct`, best around c=4.
    *
-   * Two things remain true regardless. `pi` is flat in the high-branching positions where a prior
-   * would earn its keep, because the search that produced those targets did not concentrate there
-   * either -- 5.3% on the favourite at 300 iterations, 28.2% at 1232. And the exploration constant
-   * here is borrowed, not measured.
+   * **Its advantage shrinks as the budget grows**, which is the opposite of what I predicted twice.
+   * At 300 iterations, +81 elo [39, 122]. At 1000, +21 elo [-27, 69] over 200 games -- no result.
+   *
+   * The reason is duller than the ratio argument it replaces. UCB1's forced random expansion is a
+   * *fixed* cost: one wasted iteration per legal move, about 76 at a typical position here. That is
+   * a quarter of a 300-iteration budget and a thirteenth of a 1000-iteration one. Most of what PUCT
+   * buys is recovering that fixed cost, so its share falls as iterations rise -- and what remains,
+   * the prior's actual guidance, is small because the priors are only 1.5 to 3x uniform.
+   *
+   * So it is worth having exactly where search is cheapest relative to branching, which is not where
+   * anyone would look for it. And the way to make it matter at depth is a policy head worth
+   * consulting, not a bigger exploration constant.
+   *
+   * Which loops back to `pi` being flat in the high-branching positions where a prior would earn its
+   * keep, because the search that produced those targets did not concentrate there either -- 5.3% on
+   * the favourite at 300 iterations, 28.2% at 1232. Deeper search sharpens the targets; sharper
+   * targets are what would raise that +21.
    */
   selection: 'ucb1' | 'puct';
   /**
