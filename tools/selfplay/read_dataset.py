@@ -26,6 +26,7 @@ class Dataset:
     h: np.ndarray  # the hand-written heuristic's value, for a baseline
     meta: np.ndarray  # (N, 3): game, move, seat
     sidecar: dict
+    source: np.ndarray | None = None  # which generation each row came from, when several are loaded
 
     def seed_for(self, row: int) -> str:
         """The game seed behind a row, so a suspicious sample can be found in the replay viewer."""
@@ -86,6 +87,80 @@ def load(directory: str | Path) -> Dataset:
     assert np.allclose(pi.sum(axis=1), 1.0, atol=1e-4), "policy rows do not sum to 1"
 
     return Dataset(x=x, pi=pi, z=z, q=q, h=h, meta=meta, sidecar=sidecar)
+
+
+def load_window(directories) -> Dataset:
+    """Several generations at once, as one dataset. AlphaZero's replay buffer, done by hand.
+
+    A generation trained only on its own games learns from a narrower slice of the game each round,
+    and the value head is the one that suffers: its effective sample size is the *number of games*,
+    not the row count, so a window of two generations is genuinely twice the labels rather than twice
+    the rows. That is the one lever measurement has actually supported here.
+
+    **Game ids are offset per generation, and this is the part that must not be got wrong.**
+    `split_by_game` groups rows by `meta[:, 0]` so that positions from one game never straddle the
+    train/test boundary -- they share an outcome and look alike, so splitting through a game reports a
+    score that does not exist. Concatenating raw would make generation zero's game 5 and generation
+    one's game 5 the same group. Nothing would fail; the holdout would just quietly be contaminated,
+    and every number after it would be a little too good.
+
+    Weighting is uniform, which is the assumption most worth revisiting. AlphaZero's window spans
+    generations of comparable strength; ours will not, at least at first -- gen-0's games come from a
+    search measured 352 elo weaker than the one that will produce gen-1. Whether the extra games are
+    worth the staler play is an experiment, not a principle: train on the last generation alone and on
+    the window, and compare on the same holdout.
+    """
+    dirs = [Path(d) for d in directories]
+    if not dirs:
+        raise ValueError("load_window needs at least one directory")
+    sidecars = [json.loads((d / "dataset.json").read_text()) for d in dirs]
+
+    features, policy = sidecars[0]["featureSize"], sidecars[0]["policySize"]
+    for d, s in zip(dirs, sidecars):
+        if (s["featureSize"], s["policySize"]) != (features, policy):
+            raise ValueError(
+                f"{d} is {s['featureSize']}x{s['policySize']}, expected {features}x{policy} -- "
+                "the encoding changed between these generations and they cannot be mixed"
+            )
+
+    total = sum(s["rows"] for s in sidecars)
+    # Preallocated and filled one generation at a time, rather than concatenated at the end. A
+    # generation is ~8GB; holding every one of them plus the joined copy is how a window of four
+    # stops fitting in memory for no reason.
+    x = np.empty((total, features), dtype="<f4")
+    pi = np.empty((total, policy), dtype="<f4")
+    z, q, h = (np.empty(total, dtype="<f4") for _ in range(3))
+    meta = np.empty((total, 3), dtype="<i4")
+    source = np.empty(total, dtype="<i4")
+
+    at, game_offset, seeds = 0, 0, []
+    for index, directory in enumerate(dirs):
+        part = load(directory)
+        rows = part.x.shape[0]
+        x[at : at + rows] = part.x
+        pi[at : at + rows] = part.pi
+        z[at : at + rows] = part.z
+        q[at : at + rows] = part.q
+        h[at : at + rows] = part.h
+        meta[at : at + rows] = part.meta
+        meta[at : at + rows, 0] += game_offset
+        source[at : at + rows] = index
+        at += rows
+        game_offset += len(part.sidecar["seeds"])
+        seeds.extend(part.sidecar["seeds"])
+        del part  # ~8GB, and the next iteration wants the room
+
+    sidecar = {
+        "rows": total,
+        "featureSize": features,
+        "policySize": policy,
+        "seeds": seeds,
+        "window": [
+            {"dir": str(d), "rows": s["rows"], "games": len(s["seeds"]), "config": s.get("config")}
+            for d, s in zip(dirs, sidecars)
+        ],
+    }
+    return Dataset(x=x, pi=pi, z=z, q=q, h=h, meta=meta, sidecar=sidecar, source=source)
 
 
 if __name__ == "__main__":

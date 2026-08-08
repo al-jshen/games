@@ -31,7 +31,7 @@ from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
 from checkpoint import save  # noqa: E402
-from read_dataset import load  # noqa: E402
+from read_dataset import load_window  # noqa: E402
 
 torch.manual_seed(7)
 np.random.seed(7)
@@ -169,12 +169,20 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
         return model(x_test).squeeze(-1).cpu().numpy(), best_epoch, model
 
 
-def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
+def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
          save_to: str | None = None) -> int:
-    data = load(directory)
+    data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
     print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game")
+    window = data.sidecar.get("window")
+    if window and len(window) > 1:
+        # Printed because a windowed run is easy to mistake for a single-generation one, and the
+        # composition is what makes the numbers comparable or not.
+        print("  window of " + str(len(window)) + " generations:")
+        for w in window:
+            print(f"    {w['dir']:<28} {w['games']:>6,} games, {w['rows']:>9,} rows"
+                  + (f", net={w['config']['net']}" if (w.get("config") or {}).get("net") else ", no net"))
 
     z_test = data.z[test_mask]
     device, (x_train, z_train, q_train, x_test, z_test_t) = resident(
@@ -238,7 +246,7 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
         save(
             models[(best_kind, best_lambda)], save_to,
             kind="value", architecture=best_kind, value_lambda=best_lambda,
-            features=int(data.x.shape[1]), trained_on=str(directory), games=int(games),
+            features=int(data.x.shape[1]), trained_on=[str(d) for d in directories], games=int(games),
             held_out=dict(best),
             baselines={"heuristic": heuristic["mse"],
                        "search_q": search_q["mse"] if search_q else None},
@@ -306,10 +314,15 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("directory", nargs="?", default=".data/gen0", help="a self-play dataset")
+    parser.add_argument(
+        "directories",
+        nargs="+",
+        default=[".data/gen0"],
+        help="one or more self-play datasets, oldest first -- a sliding window over generations",
+    )
     parser.add_argument("--device", help="cuda, cpu, ... (default: cuda when one is present)")
     parser.add_argument("--batch", type=int, default=8192, help="see fit() -- it was measured")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--save", help="write the winning model here, for the search to load")
     args = parser.parse_args()
-    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs, args.save))
+    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save))

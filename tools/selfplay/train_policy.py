@@ -30,7 +30,7 @@ from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
 from checkpoint import save  # noqa: E402
-from read_dataset import load  # noqa: E402
+from read_dataset import load_window  # noqa: E402
 from train_value import pick_device, resident, split_by_game  # noqa: E402
 
 torch.manual_seed(7)
@@ -204,13 +204,21 @@ def split_test(meta_games: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return is_calibration, ~is_calibration
 
 
-def main(directory: str, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
+def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
          save_to: str | None = None) -> int:
-    data = load(directory)
+    data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     slots = data.pi.shape[1]
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features, {slots} policy slots")
     print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game")
+    window = data.sidecar.get("window")
+    if window and len(window) > 1:
+        # Printed because a windowed run is easy to mistake for a single-generation one, and the
+        # composition is what makes the numbers comparable or not.
+        print("  window of " + str(len(window)) + " generations:")
+        for w in window:
+            print(f"    {w['dir']:<28} {w['games']:>6,} games, {w['rows']:>9,} rows"
+                  + (f", net={w['config']['net']}" if (w.get("config") or {}).get("net") else ", no net"))
 
     device, (x_train, pi_train, x_test, pi_test) = resident(
         pick_device(device_name),
@@ -293,7 +301,7 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
         save(
             models[best_kind], save_to,
             kind="policy", architecture=best_kind, temperature=best["t"],
-            features=int(data.x.shape[1]), slots=int(slots), trained_on=str(directory),
+            features=int(data.x.shape[1]), slots=int(slots), trained_on=[str(d) for d in directories],
             held_out={k: v for k, v in best.items() if k != "t"},
             baselines={"uniform_over_visited": uniform, "target_entropy": floor},
         )
@@ -303,7 +311,12 @@ def main(directory: str, device_name: str | None = None, batch: int = 8192, epoc
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("directory", nargs="?", default=".data/gen0", help="a self-play dataset")
+    parser.add_argument(
+        "directories",
+        nargs="+",
+        default=[".data/gen0"],
+        help="one or more self-play datasets, oldest first -- a sliding window over generations",
+    )
     parser.add_argument("--device", help="cuda, cpu, ... (default: cuda when one is present)")
     parser.add_argument("--batch", type=int, default=8192)
     # 80 rather than the value trainer's 40: the policy models are still improving at 40, where the
@@ -311,4 +324,4 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--save", help="write the winning model here, for the search to load")
     args = parser.parse_args()
-    raise SystemExit(main(args.directory, args.device, args.batch, args.epochs, args.save))
+    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save))
