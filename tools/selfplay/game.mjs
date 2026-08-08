@@ -17,7 +17,7 @@ import splendorDuel, {
   visitsToPolicy,
   actionToIndex,
 } from '@games/splendor-duel';
-import { forward, loadNet } from './net.mjs';
+import { loadNet, policyOf, valueOf } from './net.mjs';
 
 /** Self-play must terminate. The official rules do not guarantee it, so the house rule goes on. */
 export const OPTIONS = { maxTurnsWithoutPurchase: 60 };
@@ -73,7 +73,7 @@ const cachedNet = (path) => {
  */
 function policyPriors(net) {
   return (state, actor, actions) => {
-    const logits = forward(net, encodeView(redactFor(actor, state), actor));
+    const logits = policyOf(net, encodeView(redactFor(actor, state), actor));
     const slots = actions.map((a) => actionToIndex(a));
 
     const shared = new Map();
@@ -95,11 +95,19 @@ function policyPriors(net) {
   };
 }
 
+/**
+ * Deps for a network at the leaf, and optionally priors for PUCT.
+ *
+ * A dual checkpoint supplies both from one file: `--net` alone is enough, and no separate policy
+ * path is needed. A single-headed value checkpoint still works and still takes a second file for the
+ * policy, which is what every measurement before the dual net was made with.
+ */
 export function depsWithNet(path, policyPath) {
   const net = cachedNet(path);
+  const priorNet = policyPath ? cachedNet(policyPath) : net.kind === 'dual' ? net : null;
   return {
     ...deps,
-    ...(policyPath ? { priors: policyPriors(cachedNet(policyPath)) } : {}),
+    ...(priorNet ? { priors: policyPriors(priorNet) } : {}),
     /*
      * Re-redacted at every leaf, deliberately. The state inside the tree is a *determinized* world
      * with hidden information sampled, and the network was trained on redacted views -- so handing
@@ -107,7 +115,7 @@ export function depsWithNet(path, policyPath) {
      * in training. Redaction throws the sample away again, which is the correct thing: the sampled
      * world decides which positions the search reaches, not what the evaluation is allowed to know.
      */
-    evaluate: (state, seat) => forward(net, encodeView(redactFor(seat, state), seat))[0],
+    evaluate: (state, seat) => valueOf(net, encodeView(redactFor(seat, state), seat)),
   };
 }
 

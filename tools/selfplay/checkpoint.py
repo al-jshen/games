@@ -77,20 +77,71 @@ def save(model: nn.Module, directory: str | Path, **meta) -> Path:
     return d
 
 
+def flatten(module: nn.Module) -> list[np.ndarray]:
+    """Weights then bias, per linear layer, in module order."""
+    blob = []
+    for m in [module] if isinstance(module, nn.Linear) else list(module):
+        if not isinstance(m, nn.Linear):
+            continue
+        blob.append(m.weight.detach().cpu().numpy().astype("<f4").ravel())
+        blob.append(m.bias.detach().cpu().numpy().astype("<f4").ravel())
+    return blob
+
+
+def save_dual(model, directory: str | Path, **meta) -> Path:
+    """A trunk with a value head and a policy head, as one checkpoint.
+
+    Written as three chains rather than one, because it is no longer a chain: the trunk forks. The
+    reader needs to know where the fork is, since running the trunk and then only the value head is
+    the common case by a factor of three hundred -- the value is wanted at every leaf and the policy
+    only where priors are computed.
+
+    Weights go down trunk, value head, policy head, each layer as weight then bias, same convention
+    as `save`. The `order` field says so explicitly rather than leaving a reader to infer it from
+    key order in a JSON object.
+    """
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    parts = {"trunk": model.trunk, "value": model.value, "policy": model.policy}
+    flat = np.concatenate([a for name in ("trunk", "value", "policy") for a in flatten(parts[name])])
+    (d / "weights.f32").write_bytes(flat.tobytes())
+
+    sidecar = {
+        "kind": "dual",
+        "trunk": describe(model.trunk),
+        "heads": {"value": describe(model.value), "policy": describe(model.policy)},
+        "order": ["trunk", "value", "policy"],
+        "parameters": int(flat.size),
+        "file": "weights.f32",
+        **meta,
+    }
+    (d / "model.json").write_text(json.dumps(sidecar, indent=2) + "\n")
+    return d
+
+
 def load(directory: str | Path) -> tuple[list[dict], list[tuple[np.ndarray, np.ndarray]]]:
-    """Read one back, for tests and for checking a checkpoint against the model that wrote it."""
+    """Read one back, for tests and for checking a checkpoint against the model that wrote it.
+
+    Dual checkpoints come back flattened into one chain of layer descriptors, which is right for
+    verifying the bytes and wrong for running them -- the fork is in the sidecar, not here.
+    """
     d = Path(directory)
     sidecar = json.loads((d / "model.json").read_text())
     flat = np.fromfile(d / sidecar["file"], dtype="<f4")
     if flat.size != sidecar["parameters"]:
         raise ValueError(f"{d} holds {flat.size} parameters, sidecar claims {sidecar['parameters']}")
 
+    if sidecar.get("kind") == "dual":
+        layers = sidecar["trunk"] + sidecar["heads"]["value"] + sidecar["heads"]["policy"]
+    else:
+        layers = sidecar["layers"]
+
     weights, at = [], 0
-    for layer in sidecar["layers"]:
+    for layer in layers:
         n_in, n_out = layer["in"], layer["out"]
         w = flat[at : at + n_out * n_in].reshape(n_out, n_in)
         at += n_out * n_in
         b = flat[at : at + n_out]
         at += n_out
         weights.append((w, b))
-    return sidecar["layers"], weights
+    return layers, weights

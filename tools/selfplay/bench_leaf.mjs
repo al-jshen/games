@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { RandomCursor } from '@games/engine';
 import { DEFAULT_CONFIG, search } from '@games/bot-ismcts';
 import splendorDuel, { encodeView, evaluate, redactFor, sampleAction } from '@games/splendor-duel';
-import { forward, loadNet } from './net.mjs';
+import { forward, loadNet, valueOf } from './net.mjs';
 import { deps, OPTIONS } from './game.mjs';
 import { requireFreshBuild } from './fresh.mjs';
 
@@ -104,8 +104,8 @@ const rows = [
   bench('evaluate (the heuristic)', (s) => evaluate(s, 0), 200_000),
   bench('redactFor', (s) => redactFor(0, s).board.length, 100_000),
   bench('encodeView', (s) => encodeView(redactFor(0, s), 0)[0], 100_000),
-  bench('forward pass alone', () => forward(net, scratchX)[0], 200_000),
-  bench('net leaf: redact + encode + forward', (s) => forward(net, encodeView(redactFor(0, s), 0))[0], 50_000),
+  bench('forward pass alone', () => valueOf(net, scratchX), 200_000),
+  bench('net leaf: redact + encode + forward', (s) => valueOf(net, encodeView(redactFor(0, s), 0)), 50_000),
   bench('rollout only (40 ply)', (s) => rollout(s, 0, rng), 5_000),
   bench("incumbent leaf ('mixed')", (s) => 0.5 * evaluate(s, 0) + 0.5 * rollout(s, 0, rng), 5_000),
 ];
