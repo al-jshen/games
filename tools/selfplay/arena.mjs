@@ -18,6 +18,7 @@
 
 import { BASELINE, DEFAULT_CONFIG } from '@games/bot-ismcts';
 import { defaultWorkers, runJobs } from './pool.mjs';
+import { writeFileSync } from 'node:fs';
 import { requireFreshBuild } from './fresh.mjs';
 
 requireFreshBuild();
@@ -35,6 +36,12 @@ const WORKERS = Number(flag('workers', String(defaultWorkers())));
 const SEED = flag('seed', 'arena');
 const LABEL_A = flag('label-a', 'A');
 const LABEL_B = flag('label-b', 'B');
+/*
+ * Where to write the result as JSON, for a caller that has to *decide* something rather than read
+ * it. The orchestrator gates a promotion on the score, and scraping that out of prose printed for a
+ * human is the kind of coupling that breaks silently the first time the wording changes.
+ */
+const REPORT = flag('report', null);
 
 /**
  * A player from a command line argument.
@@ -121,7 +128,9 @@ const makeB = parsePlayer(flag('b', 'default'), NET_B, POLICY_B);
 const jobs = buildJobs(makeA, makeB);
 
 const describe = (spec, net, policy, make) => {
+  // A random player has no search config at all, which this line used to assume it did.
   const { config } = make('x');
+  if (!config) return spec;
   const puct = config.selection === 'puct' ? ` puctDepth=${config.puctDepth} c=${config.puctExploration}` : '';
   return `${spec}${net ? `  net=${net}` : ''}${policy ? `  policy=${policy}` : ''}` +
     `  leaf=${config.leaf} select=${config.selection}${puct} iterations=${config.iterations}`;
@@ -185,6 +194,34 @@ console.log(`  ${(moves / jobs.length).toFixed(0)} moves/game, ${seconds.toFixed
  * point of running the match: 55% over 40 games and 55% over 4,000 games are the same number and
  * completely different findings, and only one of them should change anyone's mind.
  */
+if (REPORT) {
+  writeFileSync(
+    REPORT,
+    `${JSON.stringify(
+      {
+        a: { label: LABEL_A, spec: flag('a', 'default'), net: NET_A, policy: POLICY_A },
+        b: { label: LABEL_B, spec: flag('b', 'default'), net: NET_B, policy: POLICY_B },
+        games: jobs.length,
+        pairs: PAIRS,
+        iterations: ITERATIONS,
+        winsA,
+        winsB,
+        draws,
+        // Draws count a half, as in the printed line. `score` is A's, like everything else here.
+        score,
+        ci: [lo, hi],
+        elo: elo(score),
+        eloCi: [elo(lo), elo(hi)],
+        significant: lo > 0.5 || hi < 0.5,
+        seconds,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  console.log(`  wrote ${REPORT}`);
+}
+
 if (lo > 0.5) {
   console.log(`  ${LABEL_A} is stronger. The interval clears 50%, so this is a result.`);
 } else if (hi < 0.5) {

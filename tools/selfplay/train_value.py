@@ -170,7 +170,8 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
 
 
 def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
-         save_to: str | None = None) -> int:
+         save_to: str | None = None, kinds=("linear", "tiny", "mlp"),
+         lambdas=None, lr: float = 1e-3) -> int:
     data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
@@ -219,15 +220,17 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
 
     # 0 is the pure game outcome, 1 the pure search estimate. In between trades the outcome's
     # unbiasedness for the search estimate's much lower variance.
-    lambdas = [0.0, 0.3, 0.6, 1.0] if has_q else [0.0]
+    # Swept unless the caller fixed them. A loop turning the crank every few hours does not
+    # need twelve configurations per generation; an experiment does.
+    lambdas = (lambdas if lambdas is not None else [0.0, 0.3, 0.6, 1.0]) if has_q else [0.0]
     results = {}
     models = {}
-    for kind in ("linear", "tiny", "mlp"):
+    for kind in kinds:
         for lam in lambdas:
             target = (1 - lam) * z_train + lam * q_train
             started = time.monotonic()
             pred, epoch, models[(kind, lam)] = fit(
-                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch
+                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch, lr=lr
             )
             # The epoch is worth seeing next to the score: a best epoch equal to the budget means the
             # run was still improving when it ran out, and the number below is a floor, not a result.
@@ -253,13 +256,17 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
         )
         print(f"  Saved the winner to {save_to}/ -- {best_kind}, lambda={best_lambda:g}.\n")
 
-    if has_q and best_lambda == 0:
+    # Both comparisons below need the sweep to have actually run. A caller that fixed the blend --
+    # the loop does, having settled it once -- has not asked whether blending helps and must not be
+    # handed an answer keyed on a lambda that was never trained.
+    swept = has_q and len(lambdas) > 1
+    if swept and best_lambda == 0:
         # The sweep ran and the outcome still won. Worth saying plainly -- a blend that did not help
         # is a result, and leaving it implicit invites someone to add it again later.
         blended = min(results[(best_kind, l)]["mse"] for l in lambdas if l > 0)
         print(f"  Bootstrapping did not help: the pure outcome target won at {best['mse']:.4f},"
               f" against {blended:.4f} for the best blend.")
-    elif has_q:
+    elif swept and 0.0 in lambdas:
         # Did the blend earn its keep, holding capacity fixed? Comparing the best blend against the
         # best outcome-only model would let a lucky capacity take credit for the target.
         pure = results[(best_kind, 0.0)]["mse"]
@@ -275,9 +282,12 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
     # Whether more parameters help, at each one's own best target. This is the diagnostic the linear
     # model is in the sweep for, and it is computed rather than asserted -- it was true at 1,200
     # games and false at 25,000, and a sentence that hardcodes either will eventually be a lie.
-    flat = min(results[("linear", l)]["mse"] for l in lambdas)
-    deep = min(results[("mlp", l)]["mse"] for l in lambdas)
-    capacity_hurts = flat < deep
+    # Only meaningful if both ends of the ladder were actually trained; a caller that fixed the
+    # architecture has not asked this question and must not be told the answer.
+    have_ladder = "linear" in kinds and "mlp" in kinds
+    flat = min(results[("linear", l)]["mse"] for l in lambdas) if have_ladder else float("nan")
+    deep = min(results[("mlp", l)]["mse"] for l in lambdas) if have_ladder else float("nan")
+    capacity_hurts = have_ladder and flat < deep
 
     # A margin, not merely a win. Crossing over by one percent is inside the noise of which games
     # landed in the held-out split, and calling that a success is how a project talks itself into
@@ -303,7 +313,9 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
     # Said either way, because it is the reading that decides what to do next and it is easy to carry
     # a stale answer forward. Capacity hurting means the lever is more games; capacity helping means
     # the data has caught up with the model and a bigger one is finally worth trying.
-    if capacity_hurts:
+    if not have_ladder:
+        pass
+    elif capacity_hurts:
         print(f"  Capacity still hurts -- linear {flat:.4f} against mlp {deep:.4f} -- so it remains")
         print("  data-bound: more games is the lever, not a different encoder.")
     else:
@@ -324,5 +336,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch", type=int, default=8192, help="see fit() -- it was measured")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--save", help="write the winning model here, for the search to load")
+    parser.add_argument("--arch", nargs="+", default=["linear", "tiny", "mlp"],
+                        help="which capacities to try; one name skips the sweep")
+    parser.add_argument("--lambda", dest="lambdas", nargs="+", type=float, default=None,
+                        help="value target blends to try; one value skips the sweep")
+    parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
-    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save))
+    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save,
+                          tuple(args.arch), args.lambdas, args.lr))

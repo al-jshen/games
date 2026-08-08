@@ -205,7 +205,8 @@ def split_test(meta_games: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
-         save_to: str | None = None) -> int:
+         save_to: str | None = None, kinds=("linear", "tiny", "mlp", "wide"),
+         lr: float = 1e-3) -> int:
     data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     slots = data.pi.shape[1]
@@ -250,9 +251,9 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
 
     results = {}
     models = {}
-    for kind in ("linear", "tiny", "mlp", "wide"):
+    for kind in kinds:
         started = time.monotonic()
-        model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs, batch=batch)
+        model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs, batch=batch, lr=lr)
         elapsed = time.monotonic() - started
         temperature = calibrate(model, x_test[cal], pi_test[cal])
         at_one = evaluate(model, x_test[scored], pi_test[scored])
@@ -264,6 +265,25 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
 
     best_kind = min(results, key=lambda k: results[k]["ce"])
     best = results[best_kind]
+
+    # Written before the verdict, because the verdict has an early return in it and `--save` is an
+    # instruction rather than a prize. A caller that asked for the checkpoint wants it whether or not
+    # the head cleared a uniform prior -- the orchestrator, for one, needs something to hand the next
+    # generation even when this one was poor.
+    if save_to:
+        # The temperature travels with the weights, because it is not a property of the experiment --
+        # it is part of the model. A checkpoint loaded without it is sharper than it has earned, and
+        # nothing downstream would notice: the ordering is identical, so it would look correct and
+        # quietly starve the moves the network was least sure about.
+        save(
+            models[best_kind], save_to,
+            kind="policy", architecture=best_kind, temperature=best["t"],
+            features=int(data.x.shape[1]), slots=int(slots), trained_on=[str(d) for d in directories],
+            held_out={k: v for k, v in best.items() if k != "t"},
+            baselines={"uniform_over_visited": uniform, "target_entropy": floor},
+        )
+        print(f"\n  Saved {best_kind} to {save_to}/, temperature {best['t']:.2f} included.")
+
 
     if best["ce"] > uniform:
         print(f"  No model beats uniform-over-visited ({uniform:.4f}). The features do not say enough")
@@ -289,23 +309,11 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
           f" {best['ce']:.4f}. The ordering is")
     print("  identical either way -- temperature cannot reorder anything -- so that gap was confidence,")
     print("  not knowledge, and PUCT would have paid for it by under-exploring what the net doubted.")
-    if results["wide"]["ce"] < results["mlp"]["ce"] < results["tiny"]["ce"]:
+    if all(k in results for k in ("tiny", "mlp", "wide")) and \
+            results["wide"]["ce"] < results["mlp"]["ce"] < results["tiny"]["ce"]:
         print("  Capacity is still paying at every step of the ladder, so the largest model here is")
         print("  probably not the largest worth trying.")
 
-    if save_to:
-        # The temperature travels with the weights, because it is not a property of the experiment --
-        # it is part of the model. A checkpoint loaded without it is sharper than it has earned, and
-        # nothing downstream would notice: the ordering is identical, so it would look correct and
-        # quietly starve the moves the network was least sure about.
-        save(
-            models[best_kind], save_to,
-            kind="policy", architecture=best_kind, temperature=best["t"],
-            features=int(data.x.shape[1]), slots=int(slots), trained_on=[str(d) for d in directories],
-            held_out={k: v for k, v in best.items() if k != "t"},
-            baselines={"uniform_over_visited": uniform, "target_entropy": floor},
-        )
-        print(f"\n  Saved {best_kind} to {save_to}/, temperature {best['t']:.2f} included.")
     return 0
 
 
@@ -323,5 +331,9 @@ if __name__ == "__main__":
     # value ones have long stopped. Measured -- `wide` best-epoch was 76 of 80.
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--save", help="write the winning model here, for the search to load")
+    parser.add_argument("--arch", nargs="+", default=["linear", "tiny", "mlp", "wide"],
+                        help="which capacities to try; one name skips the sweep")
+    parser.add_argument("--lr", type=float, default=1e-3)
     args = parser.parse_args()
-    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save))
+    raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save,
+                          tuple(args.arch), args.lr))

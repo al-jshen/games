@@ -1,0 +1,76 @@
+# The self-play loop, end to end.
+#
+#     python3 tools/selfplay/loop.py tools/selfplay/loop.yaml
+#
+# Every generation: play games with the reigning network, train both heads on a window of recent
+# generations, make the candidate play the incumbent, promote it only if it wins by the threshold,
+# then play a fixed opponent so absolute progress is visible and not just relative.
+#
+# Numbers below are for a 12-core box with one GPU. The measurements they come from are in the
+# doc comments of the tools they configure.
+
+run:
+  dir: .data/loop          # datasets, models, logs, reports and state all live here
+  generations: 5
+  # Where to start. Omit for a cold start: generation 0 is then played with the hand-written
+  # evaluation, which is exactly how the first dataset was ever made. Point it at an existing
+  # checkpoint to carry on from one.
+  seed_model:
+    value: .data/models/value-gen0
+    policy: .data/models/policy-gen0
+
+selfplay:
+  games: 25000
+  # The main cost dial, and the one real decision here. On 12 cores, 25,000 games is ~6h at 300 and
+  # ~24h at 1232 -- the network leaf buys 4.1x the iterations for the same wall clock, so 1232 costs
+  # what 300 used to. Deeper search makes sharper policy targets; more games is the lever the value
+  # head has actually been measured to want. There is no free answer.
+  iterations: 300
+  workers: null            # null = one per core, less one
+  # Sampling the opening in proportion to visit counts. Off, because at 300 iterations over ~76 legal
+  # moves the visit distribution is uniform to within a rounding error and sampling from it is not
+  # exploration, it is random opening play. Worth switching on at higher iteration counts.
+  temperature: 0
+  temperature_moves: 15
+
+training:
+  # How many recent generations to train on. The value head's effective sample size is the number of
+  # games, so a window is genuinely more labels rather than more rows. Older generations come from
+  # weaker play; 1 turns it off.
+  window: 2
+  device: null             # null = cuda if present
+
+  value:
+    epochs: 40             # measured: 200 epochs moves held-out MSE by ~0.001. 40 is enough.
+    batch: 8192            # measured across 256..16384; the spread is inside holdout noise
+    lr: 0.001              # scaling with batch was tried and helped nowhere -- Adam already does it
+    arch: [tiny]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
+    lambda: [0.6]          # target = (1-l)*outcome + l*search value; 0.6 won at 25k games
+
+  policy:
+    epochs: 80             # measured: still improving at 40, best epoch 76 of 80
+    batch: 8192
+    lr: 0.001
+    arch: [wide]           # only `wide` beat a uniform prior; capacity had not saturated
+
+# The gate. Candidate against incumbent, promote only on a win.
+arena:
+  games: 300               # 120 games resolves about +-62 elo; 300 gets you to roughly +-40
+  iterations: 300
+  threshold: 0.55          # AlphaGo Zero's number. AlphaZero skipped gating; it had 44M games
+  workers: null
+  use_policy: false        # priors are only read under `selection: puct`
+  search:
+    selection: ucb1        # puct is +81 elo at 300 iterations and nothing measurable at 1000
+    normaliseValues: true  # turning this off cost 441 elo; see the note in config.ts
+
+# Absolute progress. The gate only compares neighbours, so a loop can pass every one of them and
+# still be circling. This opponent never changes, so the series of scores means something.
+baseline:
+  enabled: true
+  games: 60
+  iterations: 300
+  opponent: random         # saturates fast; swap for a fixed spec to keep resolving, e.g.
+                           #   opponent: '{"leaf":"mixed","iterations":300}'
+  workers: null
+  search: {}
