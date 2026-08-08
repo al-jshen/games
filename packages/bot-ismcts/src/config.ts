@@ -167,8 +167,12 @@ export interface SearchConfig {
    *
    * Separate from `exploration` because the two terms are on different scales and share nothing but
    * a name -- UCB1's multiplies `√(log a / n)`, PUCT's multiplies `P·√ΣN/(1+n)`. Tuning one to the
-   * other's value would be a coincidence. 1.5 is the value Tian et al. inferred for AlphaGo Zero,
-   * which is a starting point and not a measurement of this game.
+   * other's value would be a coincidence.
+   *
+   * 4, not the 1.5 Tian et al. inferred for AlphaGo Zero. That was the starting point and it is the
+   * wrong one here: on move agreement with a 3000-iteration reference over 150 positions, 1.5 scored
+   * 47% and 4 scored 53%, and the +81 elo arena result was measured at 4. Borrowed constants are a
+   * place to start looking, not a default to ship.
    */
   puctExploration: number;
   /**
@@ -179,6 +183,16 @@ export interface SearchConfig {
    * 0 it is one call per *move* rather than one per iteration -- ~4% overhead -- and the root is
    * where the waste is worst, since it has the most legal moves and the most iterations to squander
    * on them. So the cheap experiment and the full one are the same code path with a different number.
+   *
+   * **0, because full depth is not worth its cost and possibly not worth anything.** Measured head to
+   * head at 300 iterations, everything else equal: full depth scores 47.7% against root-only, -16 elo
+   * [-56, 23] -- no result over 300 games -- while costing 3.1x the time, since priors move from one
+   * forward pass per move to one per iteration. Root-only gets the same strength for 9% overhead.
+   *
+   * That is not an argument that deeper priors cannot help. It is an argument that *these* priors do
+   * not, which is the same conclusion the whole policy head keeps arriving at: gen-0's `pi` targets
+   * are near-uniform in the high-branching positions, so a prior trained on them has little to say
+   * exactly where the tree is widest.
    */
   puctDepth: number;
 
@@ -199,8 +213,8 @@ export const BASELINE: SearchConfig = {
   worldPool: 32,
   normaliseValues: true,
   selection: 'ucb1',
-  puctExploration: 1.5,
-  puctDepth: 99,
+  puctExploration: 4,
+  puctDepth: 0,
   seed: 'ismcts',
 };
 
