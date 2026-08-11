@@ -33,9 +33,9 @@ afterEach(() => {
 });
 
 describe('the self-play worker pool', () => {
-  it('gives the machine to the workers, leaving the parent one core', () => {
+  it('gives the whole machine to the workers, holding nothing back for the parent', () => {
     const cores = availableParallelism();
-    expect(defaultWorkers()).toBe(Math.max(1, cores - 1));
+    expect(defaultWorkers()).toBe(Math.max(1, cores));
     /*
      * The ceiling that used to be here read `Math.min(16, ...)`, which is invisible on a laptop and
      * enormous on anything else -- on the 96-core machine this is meant to run on it left 80 cores

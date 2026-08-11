@@ -29,7 +29,7 @@ selfplay:
   # what 300 used to. Deeper search makes sharper policy targets; more games is the lever the value
   # head has actually been measured to want. There is no free answer.
   iterations: 300
-  workers: null            # null = one per core, less one
+  workers: null            # null = one per core
   # Sampling the opening in proportion to visit counts. Off, because at 300 iterations over ~76 legal
   # moves the visit distribution is uniform to within a rounding error and sampling from it is not
   # exploration, it is random opening play. Worth switching on at higher iteration counts.

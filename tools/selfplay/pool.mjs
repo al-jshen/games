@@ -13,18 +13,23 @@ import { playGame } from './game.mjs';
 
 export function defaultWorkers() {
   /*
-   * One core for the parent, the rest for work.
+   * Every core to the workers.
    *
    * There used to be a ceiling of 16 here, from when this only ever ran on a laptop, and it is a
    * real cost on anything bigger: measured over 1,000 games on 96 cores, lifting it took generation
    * from 1.44 games/s to 4.41.
    *
-   * One core and no more, because the parent turns out to need almost nothing. It looks like it
-   * should -- it packs ~340KB of Float32Array per game and appends six files -- but measured mid-run
-   * it sits at 1.2% of a core, the work being rare and mostly I/O. An earlier version of this
-   * reserved a sixteenth of the machine on that bad intuition and left ~5.6 cores idle.
+   * Nothing is held back for the parent, because the parent turns out to need almost nothing. It
+   * looks like it should -- it packs ~340KB of Float32Array per game and appends six files -- but
+   * measured mid-run it sits at 1.2% of a core, the work being rare and mostly I/O. An earlier
+   * version of this reserved a sixteenth of the machine on that bad intuition and left ~5.6 cores
+   * idle; the one core reserved after that was the same mistake, just smaller. The OS is a better
+   * judge of how to interleave a mostly-idle parent with N busy children than a subtraction here is.
+   *
+   * The subtraction cost most on the machines where it was meant to help least: on a 4-core box it
+   * gave away a quarter of the machine to a thread using 1.2% of one.
    */
-  return Math.max(1, availableParallelism() - 1);
+  return Math.max(1, availableParallelism());
 }
 
 /**
