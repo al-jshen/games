@@ -80,11 +80,22 @@ def split_by_game(data, holdout=0.2):
     """
     games = data.meta[:, 0]
     unique = np.unique(games)
+    # An empty dataset is readable by design -- generation publishes one before playing a game, so
+    # that a kill in the first second still leaves something coherent -- which means a trainer can
+    # be pointed at one. Said plainly here, because the alternative is what it used to do: build a
+    # float64 mask out of an empty list and die on `~` with a TypeError about casting rules, several
+    # frames from anything that names the dataset.
+    if len(unique) < 2:
+        raise SystemExit(
+            f"  dataset has {data.x.shape[0]:,} rows across {len(unique)} game(s) -- nothing to "
+            f"split into train and test.\n  Self-play probably failed or was killed early; check "
+            f"its log and regenerate before training."
+        )
     rng = np.random.default_rng(7)
     rng.shuffle(unique)
-    cut = int(len(unique) * (1 - holdout))
-    train_games, test_games = set(unique[:cut].tolist()), set(unique[cut:].tolist())
-    train = np.array([g in train_games for g in games])
+    cut = max(1, min(int(len(unique) * (1 - holdout)), len(unique) - 1))
+    train_games = set(unique[:cut].tolist())
+    train = np.array([g in train_games for g in games], dtype=bool)
     return train, ~train
 
 

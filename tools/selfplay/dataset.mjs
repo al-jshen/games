@@ -26,10 +26,19 @@
 import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Written beside the blobs so a reader can check it is reading what it thinks. */
-export function sidecarFor({ rows, featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt }) {
+/**
+ * Written beside the blobs so a reader can check it is reading what it thinks.
+ *
+ * `seeds` is the *plan* -- every seed the run intends to play, known before a single game starts --
+ * while `rows` and `games` are what actually reached the disk. Keeping the two apart matters: a run
+ * that dies in its first second still has a full-length `seeds`, so anything that measures progress
+ * by `seeds.length` reads a crashed run as a finished one.
+ */
+export function sidecarFor({ rows, games, featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt }) {
   return {
     rows,
+    // Games whose rows are on disk, as against `seeds.length` games asked for.
+    games,
     featureSize,
     policySize,
     files: {
@@ -90,15 +99,19 @@ const bytes = (array) => Buffer.from(array.buffer, array.byteOffset, array.byteL
 export async function openDataset(dir, { featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt }) {
   await mkdir(dir, { recursive: true });
 
-  const describe = (rows) =>
-    sidecarFor({ rows, featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt });
-  const names = describe(0).files;
+  const describe = (rows, games) =>
+    sidecarFor({ rows, games, featureSize, policySize, seeds, featureLayout, policyLayout, config, generatedAt });
+  const names = describe(0, 0).files;
   const handles = Object.fromEntries(
     await Promise.all(Object.entries(names).map(async ([key, name]) => [key, await open(join(dir, name), 'w')])),
   );
 
   let rows = 0;
-  const writeSidecar = () => writeFile(join(dir, 'dataset.json'), `${JSON.stringify(describe(rows), null, 2)}\n`);
+  // Counted by distinct game index rather than by call, because `writeDataset` hands over every
+  // game at once while generation appends one at a time, and both have to report the same number.
+  const played = new Set();
+  const writeSidecar = () =>
+    writeFile(join(dir, 'dataset.json'), `${JSON.stringify(describe(rows, played.size), null, 2)}\n`);
   // A readable, empty dataset from the outset, so an early kill still leaves something coherent.
   await writeSidecar();
 
@@ -106,18 +119,22 @@ export async function openDataset(dir, { featureSize, policySize, seeds, feature
     get rows() {
       return rows;
     },
+    get games() {
+      return played.size;
+    },
     async append(samples) {
       if (samples.length === 0) return;
       const packed = pack(samples, featureSize, policySize);
       await Promise.all(Object.entries(packed).map(([key, array]) => handles[key].write(bytes(array))));
       rows += samples.length;
+      for (const sample of samples) played.add(sample.game);
     },
     /** Publish the rows appended so far. Cheap, but not free, so the caller chooses when. */
     flush: writeSidecar,
     async close() {
       await writeSidecar();
       await Promise.all(Object.values(handles).map((handle) => handle.close()));
-      return describe(rows);
+      return describe(rows, played.size);
     },
   };
 }

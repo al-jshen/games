@@ -130,12 +130,21 @@ class Loop:
         wanted = int(cfg["games"])
         if sidecar.exists():
             meta = json.loads(sidecar.read_text())
-            if len(meta["seeds"]) >= wanted:
-                print(f"  already done: {meta['rows']:,} rows from {len(meta['seeds']):,} games")
+            # `games`, never `seeds`. The seed list is the *plan* and the generator writes it whole
+            # before playing anything, so it reads full from the first millisecond -- a run that
+            # died on its first move leaves `seeds` at 25,000 and the blobs at zero bytes. Measuring
+            # completion by it made this branch unreachable and handed the trainer an empty dataset,
+            # which failed several steps later as a numpy TypeError about `invert`. Older datasets
+            # predate the field, so fall back to the plan but only when rows were actually written.
+            done = meta.get("games")
+            if done is None:
+                done = len(meta["seeds"]) if meta["rows"] else 0
+            if done >= wanted:
+                print(f"  already done: {meta['rows']:,} rows from {done:,} games")
                 return out
             # A partial dataset is readable by design, but it is not what was asked for, and quietly
             # training on a third of a generation is worse than saying so and doing it again.
-            print(f"  incomplete ({len(meta['seeds']):,} of {wanted:,} games) -- regenerating")
+            print(f"  incomplete ({done:,} of {wanted:,} games) -- regenerating")
 
         command = [NODE, "tools/selfplay/generate.mjs",
                    "--games", str(wanted),

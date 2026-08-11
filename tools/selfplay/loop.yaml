@@ -12,12 +12,15 @@
 run:
   dir: .data/loop          # datasets, models, logs, reports and state all live here
   generations: 5
-  # Where to start. Omit for a cold start: generation 0 is then played with the hand-written
-  # evaluation, which is exactly how the first dataset was ever made. Point it at an existing
-  # checkpoint to carry on from one.
-  seed_model:
-    value: .data/models/value-gen0
-    policy: .data/models/policy-gen0
+  # Where to start. Omitted, so this is a cold start: generation 0 is played with the hand-written
+  # evaluation, which is exactly how the first dataset was ever made.
+  #
+  # Uncomment to carry on from an existing pair of checkpoints instead. Note that `.data/` is
+  # ignored by git, so these paths only ever exist on a machine that has already trained a
+  # generation -- pointing at them from a fresh checkout gets you an ENOENT four hours in.
+  # seed_model:
+  #   value: .data/models/value-gen0
+  #   policy: .data/models/policy-gen0
 
 selfplay:
   games: 25000

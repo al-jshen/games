@@ -130,6 +130,52 @@ describe('the training dataset', () => {
     }
   });
 
+  it('counts the games it has written, not the ones it was asked for', async () => {
+    /*
+     * `seeds` is the plan and is written whole before a single game is played, so it says nothing
+     * about progress -- a run that dies on its first move leaves a full-length seed list beside
+     * zero bytes of blob. The orchestrator used to measure "is this generation finished" by
+     * `seeds.length`, which meant a crashed generation read as a complete one and the trainer was
+     * handed an empty dataset. `games` is the honest count and this is what pins it down.
+     */
+    const meta = {
+      seeds: ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9'],
+      featureSize: FEATURE_SIZE,
+      policySize: POLICY_SIZE,
+      featureLayout: {},
+      policyLayout: {},
+      config: {},
+      generatedAt: 'now',
+    };
+    const writer = await openDataset(dir, meta);
+    const { readFileSync } = await import('node:fs');
+
+    // Before anything is played: ten games asked for, none delivered.
+    const opened = JSON.parse(readFileSync(join(dir, 'dataset.json'), 'utf8'));
+    expect(opened.seeds).toHaveLength(10);
+    expect(opened.games).toBe(0);
+    expect(opened.rows).toBe(0);
+
+    // `sample` puts four moves in each game, so this is two whole games and no more.
+    await writer.append(Array.from({ length: 8 }, (_, i) => sample(i)));
+    await writer.flush();
+    const partial = JSON.parse(readFileSync(join(dir, 'dataset.json'), 'utf8'));
+    expect(partial.games).toBe(2);
+    expect(partial.rows).toBe(8);
+    expect(partial.seeds).toHaveLength(10);
+    expect(await writer.close()).toMatchObject({ games: 2, rows: 8 });
+
+    // The all-at-once path hands every game over in one call and has to report the same number,
+    // which is why games are counted by index rather than by how many times `append` was called.
+    const bulk = join(dir, 'bulk');
+    const sidecar = await writeDataset(bulk, {
+      samples: Array.from({ length: 8 }, (_, i) => sample(i)),
+      ...meta,
+    });
+    expect(sidecar.games).toBe(2);
+    expect(sidecar.rows).toBe(8);
+  });
+
   it('never claims more rows than it has written', async () => {
     /*
      * The sidecar is what a reader trusts, and a killed run stops at an arbitrary moment. Claiming
