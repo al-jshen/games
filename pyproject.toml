@@ -1,0 +1,62 @@
+[project]
+name = "games"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Jeff Shen", email = "jshen@flatironinstitute.org" }
+]
+requires-python = ">=3.12"
+# The self-play tooling under tools/selfplay: the trainers (torch, numpy), the dataset reader
+# (numpy) and the orchestrator (pyyaml). Nothing else in the repo is Python.
+#
+# torch is deliberately *not* here -- it is picked by group below.
+dependencies = [
+    "numpy>=2.1",
+    "pyyaml>=6.0",
+]
+
+# Which torch build to fetch. The wheels differ by an order of magnitude -- ~180MB for CPU against
+# ~2.5GB for CUDA -- and this repo runs both on workstations with no GPU and on nodes with one, so
+# the build is chosen at sync time rather than baked in.
+#
+# CPU is the default because the alternative is a trap: `uv run` re-syncs the default groups before
+# every command, so if CUDA were the fallback then a bare `uv run python tools/selfplay/loop.py`
+# on a GPU-less box would silently re-download 2.5GB of CUDA wheels each time the groups changed
+# under it. On a GPU node, ask for the other one explicitly and it sticks:
+#
+#     uv run ...                                    # CPU, the default
+#     uv sync --no-default-groups --group cu128     # CUDA 12.8 node
+#
+# The two are declared as conflicting, so uv locks a separate resolution for each rather than
+# trying to satisfy both at once.
+[dependency-groups]
+cpu = ["torch>=2.5"]
+cu128 = ["torch>=2.5"]
+
+[tool.uv]
+default-groups = ["cpu"]
+conflicts = [[{ group = "cpu" }, { group = "cu128" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cu128", group = "cu128" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.scripts]
+games = "games:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
