@@ -60,6 +60,23 @@ def duration(seconds: float) -> str:
     return f"{hours}h{minutes:02d}m" if hours else (f"{minutes}m{secs:02d}s" if minutes else f"{secs}s")
 
 
+def named(path: Path) -> str:
+    """How a path is written, both for the child processes and for the reader.
+
+    Every step runs with `cwd=ROOT`, so a path inside the repo can be handed over relative and stays
+    short and readable in the printed command lines. One outside it cannot, and `relative_to` does
+    not quietly fall back -- it raises. That matters because the run directory is exactly the thing
+    somebody moves: a generation is ~8GB and home directories have quotas, so pointing `run.dir` at
+    bulk storage is the expected case, not an exotic one.
+
+    Relative when it can be, absolute when it must be, and the child never sees the difference.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def sh(command: list[str], log: Path, ok: tuple[int, ...] = (0,)) -> None:
     """Run a step, streaming its output live and keeping a copy.
 
@@ -91,13 +108,16 @@ def sh(command: list[str], log: Path, ok: tuple[int, ...] = (0,)) -> None:
     if code not in ok:
         tail = "".join(log.read_text(errors="replace").splitlines(keepends=True)[-25:])
         raise SystemExit(f"\n  step failed ({code}); last lines of {log}:\n\n{tail}")
-    print(f"\n  ✓ {duration(time.monotonic() - started)}   log: {log.relative_to(ROOT)}", flush=True)
+    print(f"\n  ✓ {duration(time.monotonic() - started)}   log: {named(log)}", flush=True)
 
 
 class Loop:
     def __init__(self, config: dict, config_path: Path):
         self.config = config
-        self.run_dir = ROOT / config["run"]["dir"]
+        # `ROOT / x` is `x` when `x` is already absolute, so this takes both: an absolute path is
+        # used as given, a relative one is still anchored to the repo rather than to whatever
+        # directory the loop happened to be started from.
+        self.run_dir = (ROOT / Path(config["run"]["dir"]).expanduser()).resolve()
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.run_dir / "state.json"
         self.state = self._load_state(config_path)
@@ -105,7 +125,7 @@ class Loop:
     def _load_state(self, config_path: Path) -> dict:
         if self.state_path.exists():
             state = json.loads(self.state_path.read_text())
-            print(f"  resuming from {self.state_path.relative_to(ROOT)} "
+            print(f"  resuming from {named(self.state_path)} "
                   f"at generation {state['generation']}")
             return state
         seed = self.config["run"].get("seed_model") or {}
@@ -149,7 +169,7 @@ class Loop:
         command = [NODE, "tools/selfplay/generate.mjs",
                    "--games", str(wanted),
                    "--iterations", str(cfg["iterations"]),
-                   "--out", str(out.relative_to(ROOT)),
+                   "--out", named(out),
                    "--temperature", str(cfg.get("temperature", 0)),
                    "--temperature-moves", str(cfg.get("temperature_moves", 15))]
         if cfg.get("workers"):
@@ -168,7 +188,7 @@ class Loop:
         """
         span = max(1, int(self.config["training"].get("window", 1)))
         first = max(0, generation - span + 1)
-        return [str((self.run_dir / f"gen{g}").relative_to(ROOT))
+        return [named(self.run_dir / f"gen{g}")
                 for g in range(first, generation + 1)
                 if (self.run_dir / f"gen{g}" / "dataset.json").exists()]
 
@@ -184,11 +204,11 @@ class Loop:
         cfg = self.config["training"][head]
         out = self.run_dir / "models" / f"gen{generation}-{head}"
         if (out / "model.json").exists():
-            print(f"  already trained: {out.relative_to(ROOT)}")
+            print(f"  already trained: {named(out)}")
             return out
 
         command = [sys.executable, f"tools/selfplay/train_{head}.py", *datasets,
-                   "--save", str(out.relative_to(ROOT)),
+                   "--save", named(out),
                    "--epochs", str(cfg["epochs"]),
                    "--batch", str(cfg["batch"]),
                    "--lr", str(cfg["lr"])]
@@ -208,7 +228,7 @@ class Loop:
         """One arena, cached by its report file. `a` and `b` are `{spec, net, policy}`."""
         report_path = self.run_dir / "reports" / f"gen{generation}-{name}.json"
         if report_path.exists():
-            print(f"  already played: {report_path.relative_to(ROOT)}")
+            print(f"  already played: {named(report_path)}")
             return json.loads(report_path.read_text())
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -217,7 +237,7 @@ class Loop:
                    "--pairs", str(max(1, int(cfg["games"]) // 2)),
                    "--iterations", str(cfg["iterations"]),
                    "--label-a", a["label"], "--label-b", b["label"],
-                   "--report", str(report_path.relative_to(ROOT))]
+                   "--report", named(report_path)]
         for side, player in (("a", a), ("b", b)):
             if player.get("net"):
                 command += [f"--{side}-net", player["net"]]
@@ -303,10 +323,10 @@ class Loop:
 
             datasets = self.window(generation)
             step(2, steps, f"train value head — window of {len(datasets)}: {', '.join(datasets)}")
-            value = str(self.train(generation, "value", datasets).relative_to(ROOT))
+            value = named(self.train(generation, "value", datasets))
 
             step(3, steps, f"train policy head — window of {len(datasets)}")
-            policy = str(self.train(generation, "policy", datasets).relative_to(ROOT))
+            policy = named(self.train(generation, "policy", datasets))
             candidate = {"value": value, "policy": policy}
 
             threshold = float(self.config["arena"]["threshold"])

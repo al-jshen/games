@@ -10,7 +10,19 @@
 # doc comments of the tools they configure.
 
 run:
-  dir: .data/loop          # datasets, models, logs, reports and state all live here
+  # Datasets, models, logs, reports and state all live here. An absolute path is used as given; a
+  # relative one is taken from the repo root rather than from the shell's working directory, so the
+  # loop behaves the same whichever directory it is started from.
+  #
+  # `/dev/shm` is tmpfs, which is the fastest option and the only volatile one. Two things follow.
+  # It is RAM: a generation is ~8GB of blobs and the training window holds the previous ones, so
+  # five generations is ~40GB resident, and the trainer then loads a split on top of that. And it
+  # does not survive a reboot -- state.json, the promoted checkpoints and every dataset go with it,
+  # which is the one thing the resumability here cannot protect against. Somewhere durable for a
+  # run worth keeping:
+  #
+  #   dir: /mnt/ceph/users/jshen/games/loop
+  dir: /dev/shm/loop
   generations: 5
   # Where to start. Omitted, so this is a cold start: generation 0 is played with the hand-written
   # evaluation, which is exactly how the first dataset was ever made.
