@@ -9,6 +9,52 @@
 # Numbers below are for a 12-core box with one GPU. The measurements they come from are in the
 # doc comments of the tools they configure.
 
+# Where the steps actually run. `local` is subprocesses on this machine, which is what the loop has
+# always done. `slurm` submits each step and waits, which changes nothing about the loop's decisions
+# -- the same commands, the same artefacts, the same gate -- only which machine executes them.
+#
+# Check a cluster setup without spending an allocation:
+#
+#     python3 tools/selfplay/loop.py tools/selfplay/loop.yaml --dry-run
+#
+# See docs/selfplay-on-slurm.md.
+runner:
+  kind: local              # local | slurm
+
+  slurm:
+    account: null          # --account, when the cluster wants one
+    # Exported at the top of every job script. The batch environment inherits the submitting one by
+    # default, but a version manager's shims are the usual thing to be missing on a compute node.
+    env: {}
+
+    # One `generate.mjs` per node, each playing its own slice of the generation into
+    # gen{N}/shard{i}/. The trainer reads them all without a merge, so these two numbers are the
+    # whole of the scaling: how many machines, and how much of each.
+    selfplay:
+      nodes: 128
+      cpus_per_node: 64
+      partition: null
+      time: "04:00:00"
+      # A preempted node should not discard the work the others did. Any exit code is accepted and
+      # the generation is judged by how many games reached the disk; below this fraction it stops.
+      quorum: 1.0
+
+    # One node with a GPU.
+    train:
+      nodes: 1
+      cpus_per_node: 8
+      gres: null           # e.g. "gpu:1"
+      partition: null
+      time: "02:00:00"
+
+    # One node. Not sharded: at 300 games against 25,000 the arena is not where the time goes, and
+    # splitting it would need a report-merge step for no measured gain.
+    arena:
+      nodes: 1
+      cpus_per_node: 64
+      partition: null
+      time: "01:00:00"
+
 run:
   # Datasets, models, logs, reports and state all live here. An absolute path is used as given; a
   # relative one is taken from the repo root rather than from the shell's working directory, so the

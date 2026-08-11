@@ -34,9 +34,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -77,8 +80,12 @@ def named(path: Path) -> str:
         return str(path)
 
 
-def sh(command: list[str], log: Path, ok: tuple[int, ...] = (0,)) -> None:
-    """Run a step, streaming its output live and keeping a copy.
+def sh(command: list[str], log: Path, ok: tuple[int, ...] | None = (0,)) -> int:
+    """Run a step, streaming its output live and keeping a copy. Returns its exit code.
+
+    `ok=None` accepts any code and leaves the verdict to the caller, which is what a sharded step
+    needs: one failed shard out of a hundred is a fact to weigh against the rest, not a reason to
+    abandon the ninety-nine that worked.
 
     Streamed byte-by-chunk rather than line-by-line, deliberately: both the generator and the arena
     report progress with a carriage return and no newline, so anything that waits for `\\n` would
@@ -105,14 +112,265 @@ def sh(command: list[str], log: Path, ok: tuple[int, ...] = (0,)) -> None:
                 sys.stdout.buffer.flush()
                 handle.write(chunk)
         code = proc.wait()
-    if code not in ok:
+    if ok is not None and code not in ok:
         tail = "".join(log.read_text(errors="replace").splitlines(keepends=True)[-25:])
         raise SystemExit(f"\n  step failed ({code}); last lines of {log}:\n\n{tail}")
     print(f"\n  ✓ {duration(time.monotonic() - started)}   log: {named(log)}", flush=True)
+    return code
+
+
+SHARD = "{shard}"
+
+
+@dataclass
+class Task:
+    """One step, described rather than executed, so that either backend can take it.
+
+    `command` may contain the literal `{shard}` in any argument. Locally that is substituted with
+    each index in turn and the shards run one after another; under Slurm it becomes
+    `$SLURM_ARRAY_TASK_ID` and they run as a job array. Everything else about a task is the same
+    under both, which is the point -- the loop builds one description and never asks which backend
+    it is talking to.
+    """
+
+    name: str
+    command: list[str]
+    log: Path
+    # `None` accepts any exit code. Used where the verdict lives in an artefact rather than in the
+    # status: the trainers signal "did not beat the heuristic" with 1, and a self-play array should
+    # not throw away 127 good shards because one node was preempted.
+    ok: tuple[int, ...] | None = (0,)
+    # Which `runner.slurm.<key>` block sizes this step. Ignored by the local backend.
+    resources: str = "arena"
+    shards: int | None = None
+
+    def for_shard(self, index: int | str) -> list[str]:
+        return [part.replace(SHARD, str(index)) for part in self.command]
+
+
+class LocalRunner:
+    """Subprocesses on this machine, which is what the loop has always done.
+
+    Shards run one after another rather than at once: the point of running sharded locally is to
+    exercise the same code path the cluster will take, not to go faster, and N generators each
+    taking every core would only fight each other.
+    """
+
+    kind = "local"
+
+    def __init__(self, config: dict, run_dir: Path, dry_run: bool = False):
+        self.dry_run = dry_run
+
+    def run_many(self, tasks: list[Task]) -> None:
+        """Sequentially, because there is one machine.
+
+        The two trainers are submitted together so that a cluster can run them side by side, but
+        locally they would only divide the same cores between them and finish no sooner.
+        """
+        for task in tasks:
+            self.run(task)
+
+    def run(self, task: Task) -> None:
+        if task.shards is None:
+            self._one(task.command, task.log, task.ok)
+            return
+        worst = 0
+        for index in range(task.shards):
+            print(f"\n  shard {index + 1}/{task.shards}", flush=True)
+            log = task.log.with_name(f"{task.log.stem}-shard{index}{task.log.suffix}")
+            worst = max(worst, self._one(task.for_shard(index), log, None))
+        if task.ok is not None and worst not in task.ok:
+            raise SystemExit(f"\n  {task.name}: a shard exited {worst}")
+
+    def _one(self, command: list[str], log: Path, ok: tuple[int, ...] | None) -> int:
+        if self.dry_run:
+            print(f"  $ {' '.join(command)}", flush=True)
+            return 0
+        return sh(command, log, ok)
+
+
+class SlurmRunner:
+    """The same steps, submitted as jobs.
+
+    `sbatch --wait` blocks until the job finishes and exits with the job's status, so a submitted
+    step keeps `run`'s contract exactly: do this, come back when it is done, say whether it failed.
+    That is the whole reason the seam is here and not somewhere more elaborate.
+
+    Deliberately *not* a poll loop over `squeue`. The scheduler is shared by hundreds of people and
+    a step-by-step poll across a run of days is real load on it; `--wait` is the supported mechanism
+    and costs it nothing extra.
+    """
+
+    kind = "slurm"
+
+    def __init__(self, config: dict, run_dir: Path, dry_run: bool = False):
+        self.config = (config.get("runner") or {}).get("slurm") or {}
+        self.run_dir = run_dir
+        self.dry_run = dry_run
+        self.script_dir = run_dir / "slurm"
+        self.lock_dir = run_dir / "slurm" / "locks"
+
+    # -- the double-submit guard ----------------------------------------------------------
+
+    def check_no_live_jobs(self) -> None:
+        """Refuse to start while a previous run's jobs may still be going.
+
+        The orchestrator is expendable -- kill it and the submitted job carries on, which is fine,
+        because re-running picks up from the artefacts. The hazard is the gap before an artefact
+        exists: restart during a four-hour self-play array and nothing on disk says it is running,
+        so a second array is submitted onto the same directories and two writers interleave into
+        the same blobs.
+
+        A lock file closes that window without asking the scheduler anything. It is deliberately
+        not self-healing: deciding on your behalf that a job is dead is exactly the judgement that
+        should not be automated, since guessing wrong corrupts a generation.
+        """
+        locks = sorted(self.lock_dir.glob("*.lock")) if self.lock_dir.exists() else []
+        if not locks:
+            return
+        lines = "\n".join(
+            f"    {lock.name}: {'; '.join(lock.read_text().strip().splitlines())}" for lock in locks
+        )
+        raise SystemExit(
+            f"\n  {len(locks)} step(s) were submitted and never recorded as finished:\n\n{lines}\n\n"
+            f"  Another orchestrator may still be running them. Check with:\n"
+            f"    squeue -u $USER\n\n"
+            f"  If nothing is running, the jobs died and the locks are stale -- remove them and\n"
+            f"  re-run; each step will resume from whatever reached the disk:\n"
+            f"    rm {self.lock_dir}/*.lock"
+        )
+
+    # -- submission -----------------------------------------------------------------------
+
+    def directives(self, task: Task) -> list[str]:
+        cfg = self.config.get(task.resources) or {}
+        out = [f"--job-name={task.name}"]
+        if task.shards is None:
+            out.append(f"--output={task.log}")
+        else:
+            # One file per array task; `%a` is the task index.
+            out.append(f"--output={task.log.with_name(task.log.stem + '-shard%a' + task.log.suffix)}")
+            out.append(f"--array=0-{task.shards - 1}")
+        # `nodes` is the number of *machines the step spreads over*, which for self-play is the
+        # array width and is therefore already spent above -- each array task is its own one-node
+        # job. So every job here asks for one node, and parallelism comes from how many there are.
+        out.append("--nodes=1")
+        if cfg.get("cpus_per_node") is not None:
+            out.append(f"--cpus-per-task={cfg['cpus_per_node']}")
+        for key, flag in (("partition", "--partition"), ("time", "--time"),
+                          ("gres", "--gres"), ("mem", "--mem"), ("qos", "--qos")):
+            if cfg.get(key) is not None:
+                out.append(f"{flag}={cfg[key]}")
+        if self.config.get("account"):
+            out.append(f"--account={self.config['account']}")
+        out += [str(extra) for extra in (cfg.get("extra") or [])]
+        return out
+
+    def script(self, task: Task) -> str:
+        command = task.for_shard("$SLURM_ARRAY_TASK_ID") if task.shards is not None else task.command
+        # Quoted except for Slurm's own variables, which have to survive as shell syntax.
+        rendered = " ".join(
+            part if "$SLURM_" in part else shlex.quote(part) for part in command
+        )
+        lines = ["#!/bin/bash"]
+        lines += [f"#SBATCH {d}" for d in self.directives(task)]
+        lines += [
+            "set -uo pipefail",
+            "",
+            f"cd {shlex.quote(str(ROOT))}",
+        ]
+        for name, value in (self.config.get("env") or {}).items():
+            lines.append(f"export {name}={shlex.quote(str(value))}")
+        lines += ["", rendered, ""]
+        return "\n".join(lines)
+
+    def run_many(self, tasks: list[Task]) -> None:
+        """Submit several steps at once and wait for all of them.
+
+        One thread per job, each blocking in its own `sbatch --wait`. Threads rather than a poll
+        loop for the same reason `run` uses `--wait` at all: waiting is the scheduler's job and
+        asking it repeatedly whether it is finished yet is load it does not need. A thread parked
+        in `subprocess.run` costs nothing.
+
+        Used for the two training heads, which have no reason to be sequential -- they read the
+        same datasets, write different checkpoints, and neither looks at the other's output.
+        """
+        if len(tasks) < 2:
+            for task in tasks:
+                self.run(task)
+            return
+
+        import threading
+
+        failures: dict[str, BaseException] = {}
+
+        def target(task: Task) -> None:
+            try:
+                self.run(task)
+            except BaseException as error:  # noqa: BLE001 -- re-raised on the main thread below
+                failures[task.name] = error
+
+        print(f"  submitting {len(tasks)} jobs to run side by side: "
+              f"{', '.join(t.name for t in tasks)}", flush=True)
+        threads = [threading.Thread(target=target, args=(task,), daemon=False) for task in tasks]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if failures:
+            raise SystemExit("\n".join(str(error) for error in failures.values()))
+
+    def run(self, task: Task) -> None:
+        self.script_dir.mkdir(parents=True, exist_ok=True)
+        task.log.parent.mkdir(parents=True, exist_ok=True)
+        path = self.script_dir / f"{task.name}.sbatch"
+        path.write_text(self.script(task))
+        path.chmod(0o755)
+
+        if self.dry_run:
+            print(f"  would submit {named(path)}:\n", flush=True)
+            print("    " + self.script(task).replace("\n", "\n    "), flush=True)
+            return
+
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        lock = self.lock_dir / f"{task.name}.lock"
+        lock.write_text(f"submitted {time.strftime('%Y-%m-%d %H:%M:%S')} from {path}\n")
+
+        command = ["sbatch", "--wait", "--parsable", str(path)]
+        print(f"  $ {' '.join(command)}", flush=True)
+        started = time.monotonic()
+        # `--wait` holds until the job ends, so this is a long block with no output of its own.
+        # Progress is in the job's log, which is why the path is printed before rather than after.
+        print(f"  waiting; job output goes to {named(task.log)}", flush=True)
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+        code = proc.returncode
+        job = (proc.stdout or "").strip().splitlines()
+        if job:
+            lock.write_text(f"{lock.read_text().strip()}\njob {job[0]}\n")
+        if proc.stderr.strip():
+            print(f"  {proc.stderr.strip()}", flush=True)
+
+        if task.ok is not None and code not in task.ok:
+            raise SystemExit(
+                f"\n  {task.name} failed ({code}); job {job[0] if job else '?'}.\n"
+                f"  Its output is in {named(task.log)}; the lock at {named(lock)} is kept so a\n"
+                f"  restart does not resubmit on top of anything still running."
+            )
+        lock.unlink(missing_ok=True)
+        print(f"\n  ✓ {duration(time.monotonic() - started)}   log: {named(task.log)}", flush=True)
+
+
+def make_runner(config: dict, run_dir: Path, dry_run: bool):
+    kind = ((config.get("runner") or {}).get("kind") or "local").lower()
+    if kind == "local":
+        return LocalRunner(config, run_dir, dry_run)
+    if kind == "slurm":
+        return SlurmRunner(config, run_dir, dry_run)
+    raise SystemExit(f"  runner.kind must be 'local' or 'slurm', not {kind!r}")
 
 
 class Loop:
-    def __init__(self, config: dict, config_path: Path):
+    def __init__(self, config: dict, config_path: Path, dry_run: bool = False):
         self.config = config
         # `ROOT / x` is `x` when `x` is already absolute, so this takes both: an absolute path is
         # used as given, a relative one is still anchored to the repo rather than to whatever
@@ -120,7 +378,38 @@ class Loop:
         self.run_dir = (ROOT / Path(config["run"]["dir"]).expanduser()).resolve()
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.run_dir / "state.json"
+        self.dry_run = dry_run
+        self.runner = make_runner(config, self.run_dir, dry_run)
+        if hasattr(self.runner, "check_no_live_jobs") and not dry_run:
+            self.runner.check_no_live_jobs()
         self.state = self._load_state(config_path)
+
+    def workers(self, step: str, cfg: dict) -> list[str]:
+        """`--workers` for a step, which must not be left to the default under Slurm.
+
+        `defaultWorkers()` reads `availableParallelism()`, which reports the machine rather than the
+        cgroup the job was given. On a shared node that oversubscribes badly -- 128 workers inside an
+        allocation of 8 cores. An explicit value from the config wins; otherwise a Slurm job asks
+        Slurm, and a local run keeps the existing behaviour of taking the box.
+        """
+        if cfg.get("workers"):
+            return ["--workers", str(cfg["workers"])]
+        if self.runner.kind == "slurm":
+            # From Slurm rather than from `cpus_per_node`, so that a job which was given less than
+            # it asked for uses what it actually got.
+            return ["--workers", "$SLURM_CPUS_ON_NODE"]
+        return []
+
+    @property
+    def shards(self) -> int:
+        """How many pieces a generation of self-play is cut into: one per node.
+
+        `runner.slurm.selfplay.nodes` is both the number of machines and the width of the job
+        array, because each node runs one generator over its own slice. One by default, which is a
+        single process writing a single dataset -- the local behaviour, unchanged.
+        """
+        cfg = ((self.config.get("runner") or {}).get("slurm") or {}).get("selfplay") or {}
+        return max(1, int(cfg.get("nodes", 1)))
 
     def _load_state(self, config_path: Path) -> dict:
         if self.state_path.exists():
@@ -139,45 +428,111 @@ class Loop:
         }
 
     def save(self) -> None:
-        self.state_path.write_text(json.dumps(self.state, indent=2) + "\n")
+        """Written to a temporary file and renamed over the real one.
+
+        `rename` within a directory is atomic, so a reader sees the old state or the new one and
+        never a half-written file. Under Slurm the orchestrator can be killed at any moment --
+        walltime, preemption, a dropped connection -- and the state file is the one artefact whose
+        loss cannot be recovered from the others.
+        """
+        if self.dry_run:
+            return
+        temporary = self.state_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(self.state, indent=2) + "\n")
+        os.replace(temporary, self.state_path)
 
     # -- steps ------------------------------------------------------------------------------
 
-    def selfplay(self, generation: int) -> Path:
-        out = self.run_dir / f"gen{generation}"
-        sidecar = out / "dataset.json"
-        cfg = self.config["selfplay"]
-        wanted = int(cfg["games"])
-        if sidecar.exists():
-            meta = json.loads(sidecar.read_text())
-            # `games`, never `seeds`. The seed list is the *plan* and the generator writes it whole
-            # before playing anything, so it reads full from the first millisecond -- a run that
-            # died on its first move leaves `seeds` at 25,000 and the blobs at zero bytes. Measuring
-            # completion by it made this branch unreachable and handed the trainer an empty dataset,
-            # which failed several steps later as a numpy TypeError about `invert`. Older datasets
-            # predate the field, so fall back to the plan but only when rows were actually written.
+    def datasets(self, generation: int) -> list[Path]:
+        """Where a generation's data lives: one directory per shard.
+
+        Always `gen{G}/shard{i}`, even when there is a single shard, so there is one layout to
+        reason about rather than one for laptops and another for clusters.
+        """
+        return [self.run_dir / f"gen{generation}" / f"shard{i}" for i in range(self.shards)]
+
+    def written(self, generation: int) -> tuple[int, int]:
+        """(games, rows) that actually reached the disk for a generation, summed over its shards.
+
+        `games`, never `seeds`. The seed list is the *plan* and the generator writes it whole before
+        playing anything, so it reads full from the first millisecond -- a run that died on its
+        first move leaves `seeds` at 25,000 and the blobs at zero bytes. Older datasets predate the
+        field, so fall back to the plan, but only where rows were actually written.
+        """
+        games = rows = 0
+        for directory in self.existing(generation):
+            meta = json.loads((directory / "dataset.json").read_text())
             done = meta.get("games")
             if done is None:
                 done = len(meta["seeds"]) if meta["rows"] else 0
-            if done >= wanted:
-                print(f"  already done: {meta['rows']:,} rows from {done:,} games")
-                return out
+            games += done
+            rows += meta["rows"]
+        return games, rows
+
+    def existing(self, generation: int) -> list[Path]:
+        """The generation's datasets that are actually on disk, shard layout or not.
+
+        `gen{G}` itself is included when it holds a dataset, so a run started before sharding
+        existed still trains and still resumes.
+        """
+        base = self.run_dir / f"gen{generation}"
+        found = [d for d in self.datasets(generation) if (d / "dataset.json").exists()]
+        found += [d for d in sorted(base.glob("shard*")) if (d / "dataset.json").exists()
+                  and d not in found]
+        if (base / "dataset.json").exists():
+            found.insert(0, base)
+        return found
+
+    def selfplay(self, generation: int) -> None:
+        cfg = self.config["selfplay"]
+        wanted = int(cfg["games"])
+        done, rows = self.written(generation)
+        if done >= wanted:
+            print(f"  already done: {rows:,} rows from {done:,} games")
+            return
+        if done:
             # A partial dataset is readable by design, but it is not what was asked for, and quietly
             # training on a third of a generation is worse than saying so and doing it again.
             print(f"  incomplete ({done:,} of {wanted:,} games) -- regenerating")
 
+        out = self.run_dir / f"gen{generation}" / f"shard{SHARD}"
         command = [NODE, "tools/selfplay/generate.mjs",
                    "--games", str(wanted),
+                   "--num-shards", str(self.shards),
+                   "--shard-id", SHARD,
                    "--iterations", str(cfg["iterations"]),
                    "--out", named(out),
                    "--temperature", str(cfg.get("temperature", 0)),
                    "--temperature-moves", str(cfg.get("temperature_moves", 15))]
-        if cfg.get("workers"):
-            command += ["--workers", str(cfg["workers"])]
+        command += self.workers("selfplay", cfg)
         if self.state["best"]["value"]:
             command += ["--net", self.state["best"]["value"]]
-        sh(command, self.run_dir / "logs" / f"gen{generation}-selfplay.log")
-        return out
+
+        self.runner.run(Task(
+            name=f"gen{generation}-selfplay",
+            command=command,
+            log=self.run_dir / "logs" / f"gen{generation}-selfplay.log",
+            # Any exit code. A sharded generation is judged by how many games landed, not by whether
+            # every task returned zero -- one preempted node should not discard the other hundred.
+            ok=None,
+            resources="selfplay",
+            shards=self.shards,
+        ))
+        if self.dry_run:
+            return
+
+        done, rows = self.written(generation)
+        quorum = float(((self.config.get("runner") or {}).get("slurm") or {})
+                       .get("selfplay", {}).get("quorum", 1.0))
+        if done < wanted * quorum:
+            raise SystemExit(
+                f"\n  self-play produced {done:,} of {wanted:,} games "
+                f"({done / max(1, wanted):.0%}), below the {quorum:.0%} quorum.\n"
+                f"  Check the shard logs in {named(self.run_dir / 'logs')} before re-running."
+            )
+        if done < wanted:
+            print(f"\n  {done:,} of {wanted:,} games ({done / wanted:.0%}) -- above the "
+                  f"{quorum:.0%} quorum, carrying on with a short generation")
 
     def window(self, generation: int) -> list[str]:
         """The datasets to train on: this generation and the previous few.
@@ -185,15 +540,27 @@ class Loop:
         A window rather than the newest alone, because the value head's effective sample size is the
         number of *games*, and more games is the only lever measurement has consistently supported.
         Older generations come from weaker play, which is the cost. `window: 1` turns it off.
+
+        Every shard of every generation in the window is passed separately. `load_window` offsets
+        game ids per directory, so shards need no merging first -- and it is the same mechanism the
+        window itself uses, which is why sharding cost the Python side nothing.
         """
         span = max(1, int(self.config["training"].get("window", 1)))
         first = max(0, generation - span + 1)
-        return [named(self.run_dir / f"gen{g}")
-                for g in range(first, generation + 1)
-                if (self.run_dir / f"gen{g}" / "dataset.json").exists()]
+        dirs: list[Path] = []
+        for g in range(first, generation + 1):
+            found = self.existing(g)
+            # Under --dry-run no self-play has actually happened, so fall back to the directories
+            # the real run would have written. Otherwise the rendered trainer command would carry
+            # no datasets at all, which is the one argument most worth seeing before submitting.
+            dirs.extend(found or (self.datasets(g) if self.dry_run else []))
+        return [named(d) for d in dirs]
 
-    def train(self, generation: int, head: str, datasets: list[str]) -> Path:
-        """Train one head and return where it was saved.
+    def train(self, generation: int, head: str, datasets: list[str]) -> tuple[Path, Task | None]:
+        """Where one head's checkpoint goes, and the task that would produce it.
+
+        Returns `None` for the task when the checkpoint is already there, which is how a resumed
+        run skips a head that finished before the orchestrator was killed.
 
         The trainers use their exit code to carry a *verdict* -- 1 means the model did not beat the
         heuristic -- which is right for a script run by hand and wrong here. A generation that fails
@@ -205,7 +572,7 @@ class Loop:
         out = self.run_dir / "models" / f"gen{generation}-{head}"
         if (out / "model.json").exists():
             print(f"  already trained: {named(out)}")
-            return out
+            return out, None
 
         command = [sys.executable, f"tools/selfplay/train_{head}.py", *datasets,
                    "--save", named(out),
@@ -219,10 +586,36 @@ class Loop:
             command += ["--lambda", *[str(v) for v in (blends if isinstance(blends, list) else [blends])]]
         if self.config["training"].get("device"):
             command += ["--device", str(self.config["training"]["device"])]
-        sh(command, self.run_dir / "logs" / f"gen{generation}-train-{head}.log", ok=(0, 1))
-        if not (out / "model.json").exists():
-            raise SystemExit(f"\n  {head} training wrote no checkpoint to {out}")
-        return out
+        return out, Task(
+            name=f"gen{generation}-train-{head}",
+            command=command,
+            log=self.run_dir / "logs" / f"gen{generation}-train-{head}.log",
+            ok=(0, 1),
+            resources="train",
+        )
+
+    def train_both(self, generation: int, datasets: list[str]) -> dict:
+        """Both heads, submitted together.
+
+        They read the same datasets, write different checkpoints, and neither reads the other's
+        output, so there is nothing to sequence. Under Slurm they go as two jobs and the step takes
+        as long as the slower one; locally they still run one after another, since sharing one
+        machine between them saves nothing. Either way the loop asks for both and waits for both.
+        """
+        wanted = {}
+        pending = []
+        for head in ("value", "policy"):
+            out, task = self.train(generation, head, datasets)
+            wanted[head] = out
+            if task is not None:
+                pending.append(task)
+        self.runner.run_many(pending)
+        if self.dry_run:
+            return {head: named(out) for head, out in wanted.items()}
+        for head, out in wanted.items():
+            if not (out / "model.json").exists():
+                raise SystemExit(f"\n  {head} training wrote no checkpoint to {out}")
+        return {head: named(out) for head, out in wanted.items()}
 
     def play(self, name: str, generation: int, a: dict, b: dict, cfg: dict) -> dict:
         """One arena, cached by its report file. `a` and `b` are `{spec, net, policy}`."""
@@ -243,9 +636,15 @@ class Loop:
                 command += [f"--{side}-net", player["net"]]
             if player.get("policy"):
                 command += [f"--{side}-policy", player["policy"]]
-        if cfg.get("workers"):
-            command += ["--workers", str(cfg["workers"])]
-        sh(command, self.run_dir / "logs" / f"gen{generation}-{name}.log")
+        command += self.workers("arena", cfg)
+        self.runner.run(Task(
+            name=f"gen{generation}-{name}",
+            command=command,
+            log=self.run_dir / "logs" / f"gen{generation}-{name}.log",
+            resources="arena",
+        ))
+        if self.dry_run:
+            return {"score": 0.5, "winsA": 0, "winsB": 0, "draws": 0, "ci": [0.0, 1.0], "elo": 0.0}
         return json.loads(report_path.read_text())
 
     def gate(self, generation: int, candidate: dict) -> dict | None:
@@ -308,7 +707,8 @@ class Loop:
     def run(self) -> int:
         total = int(self.config["run"]["generations"])
         first = int(self.state["generation"])
-        steps = 5 if self.config.get("baseline", {}).get("enabled", True) else 4
+        # Both heads train as one step, in parallel where the backend allows it.
+        steps = 4 if self.config.get("baseline", {}).get("enabled", True) else 3
 
         for generation in range(first, first + total):
             started = time.monotonic()
@@ -322,15 +722,12 @@ class Loop:
             self.selfplay(generation)
 
             datasets = self.window(generation)
-            step(2, steps, f"train value head — window of {len(datasets)}: {', '.join(datasets)}")
-            value = named(self.train(generation, "value", datasets))
-
-            step(3, steps, f"train policy head — window of {len(datasets)}")
-            policy = named(self.train(generation, "policy", datasets))
-            candidate = {"value": value, "policy": policy}
+            step(2, steps, f"train value and policy heads — window of {len(datasets)}: "
+                           f"{', '.join(datasets)}")
+            candidate = self.train_both(generation, datasets)
 
             threshold = float(self.config["arena"]["threshold"])
-            step(4, steps, f"gate — candidate vs incumbent, {self.config['arena']['games']} games, "
+            step(3, steps, f"gate — candidate vs incumbent, {self.config['arena']['games']} games, "
                            f"promote at {threshold:.0%}")
             report = self.gate(generation, candidate)
             if report is None:
@@ -355,8 +752,8 @@ class Loop:
                 print(f"  keeping incumbent: {self.state['best']['value']}")
 
             baseline_score = None
-            if steps == 5:
-                step(5, steps, "baseline — reigning model vs a fixed opponent (absolute progress)")
+            if steps == 4:
+                step(4, steps, "baseline — reigning model vs a fixed opponent (absolute progress)")
                 base = self.baseline(generation)
                 if base:
                     baseline_score = base["score"]
@@ -383,10 +780,18 @@ class Loop:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("config", nargs="?", default="tools/selfplay/loop.yaml")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="print what each step would run -- the job scripts, under the slurm runner -- and "
+             "submit nothing. The cheap way to check a cluster config before it costs an allocation.",
+    )
     args = parser.parse_args()
     config_path = Path(args.config)
-    banner(f"self-play loop   ·   config: {config_path}", "═")
-    return Loop(yaml.safe_load(config_path.read_text()), config_path).run()
+    config = yaml.safe_load(config_path.read_text())
+    kind = ((config.get("runner") or {}).get("kind") or "local")
+    banner(f"self-play loop   ·   config: {config_path}   ·   runner: {kind}"
+           + ("   ·   DRY RUN" if args.dry_run else ""), "═")
+    return Loop(config, config_path, dry_run=args.dry_run).run()
 
 
 if __name__ == "__main__":
