@@ -191,7 +191,7 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
     if window and len(window) > 1:
         # Printed because a windowed run is easy to mistake for a single-generation one, and the
         # composition is what makes the numbers comparable or not.
-        print("  window of " + str(len(window)) + " generations:")
+        print("  training on " + str(len(window)) + " datasets:")
         for w in window:
             print(f"    {w['dir']:<28} {w['games']:>6,} games, {w['rows']:>9,} rows"
                   + (f", net={w['config']['net']}" if (w.get("config") or {}).get("net") else ", no net"))

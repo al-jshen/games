@@ -145,7 +145,7 @@ def main(directories, device_name=None, batch=8192, epochs=60, save_to=None,
     print(f"  {train_mask.sum():,} train / {test_mask.sum():,} test, split by game")
     window = data.sidecar.get("window")
     if window and len(window) > 1:
-        print(f"  window of {len(window)} generations:")
+        print(f"  training on {len(window)} datasets:")
         for w in window:
             print(f"    {w['dir']:<28} {w['games']:>6,} games, {w['rows']:>9,} rows")
 

@@ -11,6 +11,11 @@
  * Generation zero should come from the current ISMCTS bot rather than from a randomly initialised
  * network. Random self-play in this game is not merely weak, it wanders into the positions the
  * official rules never terminate from -- so bootstrapping is faster *and* avoids the failure mode.
+ *
+ * One generation can be split across machines with `--num-shards` and `--shard-id`; see those flags
+ * below. Each shard writes its own directory and the trainer takes all of them at once:
+ *
+ *   python3 tools/selfplay/train_value.py .data/gen0/shard*
  */
 
 import { DEFAULT_CONFIG } from '@games/bot-ismcts';
@@ -30,6 +35,38 @@ const GAMES = Number(flag('games', '50'));
 const ITERATIONS = Number(flag('iterations', '300'));
 const WORKERS = Number(flag('workers', String(defaultWorkers())));
 const OUT = flag('out', '.data/gen0');
+/*
+ * Splitting one generation across several machines. `--games` stays the size of the *whole*
+ * generation and each process plays the slice of it that belongs to its shard, in the manner of
+ * `world_size` and `rank`:
+ *
+ *   node generate.mjs --games 25000 --num-shards 10 --shard-id 3 --out .../gen0/shard3
+ *
+ * Each shard writes its own directory and the trainer reads them all at once -- `load_window`
+ * already takes N datasets and offsets their game ids so no two collide, which is the same
+ * machinery a window over generations uses.
+ *
+ * The split is contiguous rather than round-robin, and that is not arbitrary: seats alternate with
+ * the game index, so a strided split with an even shard count would hand one shard nothing but
+ * even indices and it would play every game with the same seat moving first.
+ */
+const NUM_SHARDS = Number(flag('num-shards', '1'));
+const SHARD_ID = Number(flag('shard-id', '0'));
+
+if (!Number.isInteger(NUM_SHARDS) || NUM_SHARDS < 1) {
+  throw new Error(`--num-shards must be a positive integer, got ${NUM_SHARDS}`);
+}
+if (!Number.isInteger(SHARD_ID) || SHARD_ID < 0 || SHARD_ID >= NUM_SHARDS) {
+  throw new Error(`--shard-id must be in [0, ${NUM_SHARDS}), got ${SHARD_ID}`);
+}
+
+/*
+ * Floor of both ends rather than a per-shard size, so the remainder spreads one game at a time over
+ * the leading shards and the slices tile [0, GAMES) exactly -- no gap, no overlap, no last shard
+ * left holding the remainder on its own.
+ */
+const FIRST = Math.floor((SHARD_ID * GAMES) / NUM_SHARDS);
+const MINE = Math.floor(((SHARD_ID + 1) * GAMES) / NUM_SHARDS) - FIRST;
 /*
  * The value network to put at the leaf, which is what makes this a *loop* rather than one dataset.
  * Generation zero had no network and searched with `0.5*heuristic + 0.5*rollout`; every generation
@@ -77,18 +114,33 @@ const TEMPERATURE_MOVES = Number(flag('temperature-moves', '15'));
 const explore = TEMPERATURE > 0 ? { temperature: TEMPERATURE, moves: TEMPERATURE_MOVES } : null;
 
 const config = { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...(NET ? { leaf: 'evaluate' } : {}) };
-const seeds = Array.from({ length: GAMES }, (_, i) => `gen-${i}`);
+const seeds = Array.from({ length: MINE }, (_, i) => `gen-${FIRST + i}`);
 
-const jobs = seeds.map((seed, game) => ({
-  seed,
-  game,
-  gameIndex: game,
-  record: true,
-  // Both seats searched, so every position is a training row rather than half of them.
-  aFirst: game % 2 === 0,
-  a: { kind: 'ismcts', config: { ...config, seed: `a${game}` }, net: NET, explore },
-  b: { kind: 'ismcts', config: { ...config, seed: `b${game}` }, net: NET, explore },
-}));
+/*
+ * Two indices, and the distinction is the whole of the sharding.
+ *
+ * `index` is the game's identity in the generation as a whole. Everything that decides *what is
+ * played* hangs off it -- the deal, both searches, which seat moves first -- so game 7 is the same
+ * game whether it was produced by one process or by ten, and the union of the shards is exactly the
+ * run that one machine would have produced.
+ *
+ * `game` is the position within this shard's own output, and it is what `gameIndex` stamps into
+ * `meta`. That column is an index into this dataset's `seeds` array, which holds only the seeds
+ * this shard played, so it has to be local or `seed_for(row)` would point at the wrong game.
+ */
+const jobs = seeds.map((seed, game) => {
+  const index = FIRST + game;
+  return {
+    seed,
+    game: index,
+    gameIndex: game,
+    record: true,
+    // Both seats searched, so every position is a training row rather than half of them.
+    aFirst: index % 2 === 0,
+    a: { kind: 'ismcts', config: { ...config, seed: `a${index}` }, net: NET, explore },
+    b: { kind: 'ismcts', config: { ...config, seed: `b${index}` }, net: NET, explore },
+  };
+});
 
 const duration = (seconds) => {
   const hours = Math.floor(seconds / 3600);
@@ -97,7 +149,8 @@ const duration = (seconds) => {
 };
 
 console.log(
-  `Generating ${GAMES} games at ${ITERATIONS} iterations on ${WORKERS} worker(s), ` +
+  `Generating ${MINE} games at ${ITERATIONS} iterations on ${WORKERS} worker(s), ` +
+    `${NUM_SHARDS > 1 ? `shard ${SHARD_ID} of ${NUM_SHARDS} (games ${FIRST}..${FIRST + MINE - 1} of ${GAMES}), ` : ''}` +
     `leaf=${config.leaf}${NET ? ` net=${NET}` : ''}` +
     `${explore ? `, sampling at T=${TEMPERATURE} for ${TEMPERATURE_MOVES} moves` : ', greedy'}…`,
 );
@@ -111,7 +164,7 @@ const writer = await openDataset(OUT, {
   policyLayout: POLICY_LAYOUT,
   // `net` beside `config` because it is part of what produced these rows. A dataset that does not
   // record which network searched it cannot be placed in the sequence of generations later.
-  config: { ...config, net: NET, explore },
+  config: { ...config, net: NET, explore, shard: { id: SHARD_ID, of: NUM_SHARDS, first: FIRST, games: MINE, total: GAMES } },
   generatedAt: new Date().toISOString(),
 });
 
@@ -127,7 +180,7 @@ let announced = 0;
 const pending = new Map();
 let cursor = 0;
 // One game's rows are ~340KB, so the interval is a reporting choice rather than a throughput one.
-const step = Math.max(1, Math.round(GAMES / 100));
+const step = Math.max(1, Math.round(MINE / 100));
 
 let writing = Promise.resolve();
 let failure = null;
@@ -139,13 +192,13 @@ const drain = async () => {
     cursor += 1;
     await writer.append(samples);
   }
-  if (finished - announced < step && finished < GAMES) return;
+  if (finished - announced < step && finished < MINE) return;
   announced = finished;
   const elapsed = (Date.now() - started) / 1000;
-  const remaining = ((GAMES - finished) * elapsed) / finished;
+  const remaining = ((MINE - finished) * elapsed) / finished;
   await writer.flush();
   console.log(
-    `  ${finished}/${GAMES} games · ${writer.rows.toLocaleString()} rows · ` +
+    `  ${finished}/${MINE} games · ${writer.rows.toLocaleString()} rows · ` +
       `${(finished / elapsed).toFixed(2)} games/s · ${duration(elapsed)} elapsed · ${duration(remaining)} left`,
   );
 };
@@ -172,7 +225,7 @@ const sidecar = await writer.close();
 const seconds = (Date.now() - started) / 1000;
 
 const megabytes = (sidecar.rows * (FEATURE_SIZE + POLICY_SIZE + 1) * 4) / 1e6;
-console.log(`\n  ${sidecar.rows.toLocaleString()} positions from ${GAMES} games in ${duration(seconds)}`);
-console.log(`  ${(sidecar.rows / GAMES).toFixed(0)} positions per game, ${decided}/${GAMES} decided`);
+console.log(`\n  ${sidecar.rows.toLocaleString()} positions from ${MINE} games in ${duration(seconds)}`);
+console.log(`  ${(sidecar.rows / MINE).toFixed(0)} positions per game, ${decided}/${MINE} decided`);
 console.log(`  features ${FEATURE_SIZE}, policy ${POLICY_SIZE}, about ${megabytes.toFixed(0)}MB`);
 console.log(`  written to ${OUT}/`);
