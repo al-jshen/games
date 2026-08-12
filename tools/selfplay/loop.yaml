@@ -98,19 +98,46 @@ selfplay:
   # exploration, it is random opening play. Worth switching on at higher iteration counts.
   temperature: 0
   temperature_moves: 15
+  # Consult the policy head. Measured at 1000 iterations with gen-1's heads over 1000 games:
+  # +27 elo [+6, +49] for priors at the root. Modest, and it clears zero -- where the earlier
+  # 200-game attempt returned [-27, 69] and could not say either way. The gain is capped by how
+  # much the priors beat uniform, so it should grow as the policy head does.
+  #
+  # Safe from generation zero: with no policy net to consult, PUCT falls back to UCB1's expansion
+  # phase on its own, so this needs no conditional and no second setting.
+  use_policy: true
+  search:
+    selection: puct
+    puctExploration: 4     # 4, not AlphaGo Zero's 1.5 -- measured on move agreement, see config.ts
+    # 99, meaning every node. Measured head to head against the same ucb1 opponent over the same
+    # 1000 deals with gen-1's heads: priors at the root alone score 53.9%, +27 elo [+6, +49];
+    # priors everywhere score 74.0%, +182 elo [+157, +206]. Seven times the gain for 1.76x the
+    # time -- less than the 3.1x config.ts measured, because the network leaf already pays a
+    # forward pass per iteration, so a second one roughly doubles rather than triples the work.
+    #
+    # config.ts settles this at 0 on the opposite result. That measurement was made against
+    # generation zero's near-uniform priors at 300 iterations, and its own note says so: "not an
+    # argument that deeper priors cannot help ... an argument that *these* priors do not". These
+    # priors do.
+    puctDepth: 99
+    normaliseValues: true
 
 training:
   # How many recent generations to train on. The value head's effective sample size is the number of
   # games, so a window is genuinely more labels rather than more rows. Older generations come from
   # weaker play; 1 turns it off.
-  window: 2
+  # 4, not 2. The value head's binding constraint is the number of *games* -- the trainer says so
+  # each run, "effective sample size sits far nearer 40,000 than the row count" -- and a wider
+  # window is the only lever that adds labels without generating anything. It was 2 when a fit cost
+  # 50 minutes on CPU; on the GPU it is under 30 seconds, so the reason to keep it narrow is gone.
+  window: 4
   device: null             # null = cuda if present
 
   value:
     epochs: 40             # measured: 200 epochs moves held-out MSE by ~0.001. 40 is enough.
     batch: 8192            # measured across 256..16384; the spread is inside holdout noise
     lr: 0.001              # scaling with batch was tried and helped nowhere -- Adam already does it
-    arch: [mlp]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
+    arch: [tiny]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
     lambda: [0.0]          # target = (1-l)*outcome + l*search value; 0.6 won at 25k games
 
   policy:
@@ -125,9 +152,11 @@ arena:
   iterations: 1000
   threshold: 0.55          # AlphaGo Zero's number. AlphaZero skipped gating; it had 44M games
   workers: null
-  use_policy: false        # priors are only read under `selection: puct`
+  use_policy: true         # priors are only read under `selection: puct`
   search:
-    selection: ucb1        # puct is +81 elo at 300 iterations and nothing measurable at 1000
+    selection: puct        # +182 elo [+157, +206] at 1000 iterations over 1000 games, gen-1 heads
+    puctExploration: 4
+    puctDepth: 99          # every node, not just the root -- see the note under selfplay
     normaliseValues: true  # turning this off cost 441 elo; see the note in config.ts
 
 # Absolute progress. The gate only compares neighbours, so a loop can pass every one of them and
@@ -137,7 +166,13 @@ baseline:
   games: 60
   iterations: 1000         # applies to *our* side; each anchor pins its own below
   workers: null
-  search: {}
+  # Our side searches as the loop searches. Turning this on mid-run steps the series once -- the
+  # anchors do not move, so it stays readable, but the step is the priors, not progress.
+  use_policy: true
+  search:
+    selection: puct
+    puctExploration: 4
+    puctDepth: 99
   # Several opponents, because one is not enough in two different ways. They saturate at different
   # times -- `random` is already pinned at 100% against an untrained generation 0 and measures
   # nothing after that, while the heuristic search keeps resolving for a long while -- so a set

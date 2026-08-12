@@ -184,15 +184,35 @@ export interface SearchConfig {
    * where the waste is worst, since it has the most legal moves and the most iterations to squander
    * on them. So the cheap experiment and the full one are the same code path with a different number.
    *
-   * **0, because full depth is not worth its cost and possibly not worth anything.** Measured head to
-   * head at 300 iterations, everything else equal: full depth scores 47.7% against root-only, -16 elo
-   * [-56, 23] -- no result over 300 games -- while costing 3.1x the time, since priors move from one
-   * forward pass per move to one per iteration. Root-only gets the same strength for 9% overhead.
+   * **The default is 0 and the self-play loop overrides it to full depth. Both are measurements,
+   * taken against different priors, and the difference between them is the whole point.**
    *
-   * That is not an argument that deeper priors cannot help. It is an argument that *these* priors do
-   * not, which is the same conclusion the whole policy head keeps arriving at: gen-0's `pi` targets
-   * are near-uniform in the high-branching positions, so a prior trained on them has little to say
-   * exactly where the tree is widest.
+   * At 300 iterations against generation zero's priors, full depth scored 47.7% versus root-only,
+   * -16 elo [-56, 23] -- no result over 300 games -- while costing 3.1x the time, since priors move
+   * from one forward pass per move to one per iteration. Root-only got the same strength for 9%
+   * overhead, so 0 was right, and this note used to say full depth was "not worth its cost and
+   * possibly not worth anything".
+   *
+   * It also said that was not an argument deeper priors cannot help, only that *those* priors did
+   * not -- gen-0's `pi` targets being near-uniform exactly where the tree is widest. That hedge
+   * turned out to be the important sentence.
+   *
+   * Re-measured at 1000 iterations with a policy head that beats uniform-over-visited by 0.15 nats,
+   * trained on targets from a 1000-iteration search. Same value net both sides, same 1000 deals,
+   * one opponent (`ucb1`) for both arms:
+   *
+   *   root-only   53.9%   +27 elo [+6, +49]     177s
+   *   full depth  74.0%   +182 elo [+157, +206] 312s
+   *
+   * Seven times the gain for 1.76x the time -- cheaper than the 3.1x above, because at 1000
+   * iterations the network leaf already pays a forward pass per iteration, so a second one roughly
+   * doubles the network work rather than tripling it.
+   *
+   * So the knob is not "how deep can we afford priors" but "are the priors worth consulting". With
+   * a near-uniform policy head, consulting it deeper buys nothing and costs time. With one that has
+   * something to say, it is the second largest effect measured in this search after
+   * `normaliseValues`. The default stays 0 because a caller supplying no policy net or an untrained
+   * one is the case it protects; the loop sets 99 because it knows what it trained.
    */
   puctDepth: number;
 
