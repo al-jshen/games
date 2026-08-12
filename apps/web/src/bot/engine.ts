@@ -15,8 +15,8 @@
 
 import { search, withConfig, type SearchResult } from '@games/bot-ismcts';
 import { netDeps, type SplendorSearchDeps } from '@games/bot-splendor-duel';
-import { fetchNet, valueOf, type Net } from '@games/net';
-import { encodeView, type SplendorAction, type SplendorView } from '@games/splendor-duel';
+import { fetchNet, type Net } from '@games/net';
+import type { SplendorAction, SplendorView } from '@games/splendor-duel';
 
 export interface Engine {
   value: Net;
@@ -67,16 +67,4 @@ export function think(
   seed: string,
 ): SearchResult<SplendorAction> {
   return search(engine.deps, view, seat, config(iterations, seed));
-}
-
-/**
- * The value head's own opinion of a position, with no search around it.
- *
- * Worth having next to the search's estimate rather than instead of it. This is one forward pass on
- * the position as it stands -- instant, and exactly what the network thinks before any reading. The
- * search's `rootValue` is that same head averaged over a few hundred lines, so the two disagreeing
- * is informative: it means the position plays differently from how it looks.
- */
-export function staticValue(engine: Engine, view: SplendorView, seat: number): number {
-  return valueOf(engine.value, encodeView(view, seat as 0 | 1));
 }
