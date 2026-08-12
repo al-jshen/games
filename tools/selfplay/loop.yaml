@@ -145,14 +145,21 @@ training:
   warm_start: true
 
   value:
-    epochs: 40             # measured: 200 epochs moves held-out MSE by ~0.001. 40 is enough.
+    # 150. "40 is enough" was measured at 25,000 games, where 200 epochs moved held-out MSE by
+    # ~0.001. It is not enough any more: the best epoch has climbed 5 -> 19 -> 38 of 40 as the
+    # window grew, so gen-2 was still improving when the budget ran out and its score is a floor
+    # rather than a result. A fit costs 24s on the GPU, so this is minutes, and early stopping
+    # keeps the best epoch regardless -- an over-generous budget costs time, never quality.
+    epochs: 150
     batch: 8192            # measured across 256..16384; the spread is inside holdout noise
     lr: 0.001              # scaling with batch was tried and helped nowhere -- Adam already does it
     arch: [tiny]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
     lambda: [0.0]          # target = (1-l)*outcome + l*search value; 0.6 won at 25k games
 
   policy:
-    epochs: 80             # measured: still improving at 40, best epoch 76 of 80
+    # 200, for the same reason: best epoch 78, 74, 72 of 80 across three generations, so this
+    # budget has been the binding constraint the whole time. ~111s at 80 epochs.
+    epochs: 200
     batch: 8192
     lr: 0.001
     arch: [wide]           # only `wide` beat a uniform prior; capacity had not saturated
