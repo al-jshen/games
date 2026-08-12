@@ -282,6 +282,11 @@ class SlurmRunner:
             "set -uo pipefail",
             "",
             f"cd {shlex.quote(str(ROOT))}",
+            # Python block-buffers stdout whenever it is not a terminal, and under Slurm it never
+            # is. A job killed at its walltime then leaves an empty log -- precisely the case where
+            # the log is the only evidence there is, and precisely when you need to know how far it
+            # got. Set before the configured environment so it can still be overridden.
+            "export PYTHONUNBUFFERED=1",
         ]
         for name, value in (self.config.get("env") or {}).items():
             lines.append(f"export {name}={shlex.quote(str(value))}")
