@@ -17,16 +17,25 @@ dependencies = [
 ]
 
 # Which torch build to fetch. The wheels differ by an order of magnitude -- ~180MB for CPU against
-# ~2.5GB for CUDA -- and this repo runs both on workstations with no GPU and on nodes with one, so
-# the build is chosen at sync time rather than baked in.
+# ~2.5GB for CUDA -- so the build is chosen by group rather than baked into the dependency list.
 #
-# CPU is the default because the alternative is a trap: `uv run` re-syncs the default groups before
-# every command, so if CUDA were the fallback then a bare `uv run python tools/selfplay/loop.py`
-# on a GPU-less box would silently re-download 2.5GB of CUDA wheels each time the groups changed
-# under it. On a GPU node, ask for the other one explicitly and it sticks:
+# **CUDA is the default, and it has to be**, because one virtual environment is shared by machines
+# that disagree about whether there is a GPU. The self-play loop submits its training step to a GPU
+# node but embeds `sys.executable` -- the interpreter of whichever workstation launched the
+# orchestrator -- so the compute node runs *this* `.venv`, off GPFS. A CPU-only build there reports
+# `torch.cuda.is_available() == False` on an H100 and the trainer quietly picks CPU: it does not
+# fail, it just takes about fifty times as long and then hits its walltime.
 #
-#     uv run ...                                    # CPU, the default
-#     uv sync --no-default-groups --group cu128     # CUDA 12.8 node
+# That happened. This was `default-groups = ["cpu"]`, chosen because the workstation has no GPU, and
+# a generation's value head trained for 55 minutes on CPU while an H100 sat idle beside it.
+#
+# The trap is that `uv run` re-syncs the default groups before *every* command, so a default of
+# `cpu` does not merely start wrong -- it actively reverts any `uv sync --group cu128` the next time
+# the loop is launched. The default must be the build the GPU node needs. A CUDA wheel on a machine
+# with no GPU is merely large; a CPU wheel on a machine with one is a silent fifty-fold slowdown.
+#
+#     uv run ...                                 # CUDA, the default
+#     uv sync --no-default-groups --group cpu    # only if the 2.5GB is genuinely a problem
 #
 # The two are declared as conflicting, so uv locks a separate resolution for each rather than
 # trying to satisfy both at once.
@@ -35,7 +44,7 @@ cpu = ["torch>=2.5"]
 cu128 = ["torch>=2.5"]
 
 [tool.uv]
-default-groups = ["cpu"]
+default-groups = ["cu128"]
 conflicts = [[{ group = "cpu" }, { group = "cu128" }]]
 
 [tool.uv.sources]
