@@ -623,12 +623,17 @@ class Loop:
                 raise SystemExit(f"\n  {head} training wrote no checkpoint to {out}")
         return {head: named(out) for head, out in wanted.items()}
 
-    def play(self, name: str, generation: int, a: dict, b: dict, cfg: dict) -> dict:
-        """One arena, cached by its report file. `a` and `b` are `{spec, net, policy}`."""
+    def play_task(self, name: str, generation: int, a: dict, b: dict,
+                  cfg: dict) -> tuple[Path, Task | None]:
+        """Where an arena's report goes, and the task that would produce it.
+
+        `None` for the task when the report is already there, which is how a resumed run skips an
+        arena it has already played. `a` and `b` are `{spec, net, policy}`.
+        """
         report_path = self.run_dir / "reports" / f"gen{generation}-{name}.json"
         if report_path.exists():
             print(f"  already played: {named(report_path)}")
-            return json.loads(report_path.read_text())
+            return report_path, None
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         command = [NODE, "tools/selfplay/arena.mjs",
@@ -643,15 +648,28 @@ class Loop:
             if player.get("policy"):
                 command += [f"--{side}-policy", player["policy"]]
         command += self.workers("arena", cfg)
-        self.runner.run(Task(
+        return report_path, Task(
             name=f"gen{generation}-{name}",
             command=command,
             log=self.run_dir / "logs" / f"gen{generation}-{name}.log",
             resources="arena",
-        ))
+        )
+
+    def report(self, path: Path) -> dict:
+        if path.exists():
+            return json.loads(path.read_text())
         if self.dry_run:
+            # Nothing was played, so there is nothing to decide from. A neutral score keeps the
+            # rehearsal walking through the remaining steps instead of stopping at the gate.
             return {"score": 0.5, "winsA": 0, "winsB": 0, "draws": 0, "ci": [0.0, 1.0], "elo": 0.0}
-        return json.loads(report_path.read_text())
+        raise SystemExit(f"\n  the arena wrote no report to {named(path)}")
+
+    def play(self, name: str, generation: int, a: dict, b: dict, cfg: dict) -> dict:
+        """One arena. What the gate uses, having only ever one to run."""
+        path, task = self.play_task(name, generation, a, b, cfg)
+        if task is not None:
+            self.runner.run(task)
+        return self.report(path)
 
     def gate(self, generation: int, candidate: dict) -> dict | None:
         cfg = self.config["arena"]
@@ -710,18 +728,25 @@ class Loop:
         its own spec rather than leaving it to `baseline.iterations`, which the loop's operating
         point may drag along with it -- the spec wins over the flag in `arena.mjs`, so an anchor
         written that way survives a change of mind about the search.
+
+        Submitted together, like the two training heads: the anchors share no state, read nothing
+        of each other's, and the step costs as long as the slowest rather than their sum.
         """
         cfg = self.config.get("baseline") or {}
-        results = {}
+        paths, pending = {}, []
         for anchor in self.anchors():
-            results[anchor["name"]] = self.play(
+            path, task = self.play_task(
                 anchor["report"], generation,
                 {"spec": json.dumps(cfg.get("search", {})), "label": f"gen{generation} best",
                  "net": self.state["best"]["value"]},
                 {"spec": anchor["spec"], "label": anchor["name"], "net": anchor.get("net")},
                 cfg,
             )
-        return results
+            paths[anchor["name"]] = path
+            if task is not None:
+                pending.append(task)
+        self.runner.run_many(pending)
+        return {name: self.report(path) for name, path in paths.items()}
 
     def progress_table(self) -> None:
         """One row per generation, one column per anchor.
