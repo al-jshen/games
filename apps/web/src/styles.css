@@ -628,6 +628,55 @@ input:focus {
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------- the bot opponent */
+
+/*
+ * Sits under "Create match" on the one game that has a trained network. The button above it carries
+ * `margin-top: auto`, so this rides along at the bottom of the card and the cards stay aligned
+ * whatever their blurbs do.
+ */
+.bot-start {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bot-start .row {
+  gap: 6px;
+}
+.bot-start button {
+  margin-top: 0;
+}
+.bot-level {
+  padding: 5px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+.bot-level:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.bot-line {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+/*
+ * The one line that changes while you are looking at it, so it holds its own row and does not
+ * reflow the paragraph under it when the text gets shorter.
+ */
+.bot-status {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+.bot-status.on {
+  color: var(--accent);
+}
+
 /* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
 @media (max-height: 550px) {
   .app {

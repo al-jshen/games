@@ -7,33 +7,20 @@
 
 import { RandomCursor } from '@games/engine';
 import { measureDisagreement, search } from '@games/bot-ismcts';
-import splendorDuel, {
-  determinize,
-  encodeView,
-  evaluate,
-  redactFor,
-  rolloutPreference,
-  sampleAction,
-  visitsToPolicy,
-  actionToIndex,
-} from '@games/splendor-duel';
-import { loadNet, policyOf, valueOf } from './net.mjs';
+import { OPTIONS, heuristicDeps, netDeps, pickAction } from '@games/bot-splendor-duel';
+import splendorDuel, { determinize, encodeView, evaluate, redactFor, visitsToPolicy } from '@games/splendor-duel';
+import { loadNet } from './net.mjs';
 
-/** Self-play must terminate. The official rules do not guarantee it, so the house rule goes on. */
-export const OPTIONS = { maxTurnsWithoutPurchase: 60 };
+export { OPTIONS };
 
-export const deps = {
-  mod: splendorDuel,
-  determinize,
-  sampleAction,
-  evaluate: (state, seat) => evaluate(state, seat),
-  rolloutPolicy: (state, seat, actions, rng) => {
-    // Only consulted when the fast sampler is off; the sampler carries its own bias.
-    const buys = rolloutPreference(actions);
-    if (buys.length > 0 && rng.int(4) > 0) return buys[rng.int(buys.length)];
-    return rng.int(actions.length);
-  },
-};
+/**
+ * The search's dependencies, with the hand-written evaluation at the leaf.
+ *
+ * Re-exported rather than defined here: `@games/bot-splendor-duel` owns this wiring now, because the
+ * web client's bot needs the identical thing and two copies of a softmax over policy slots is the
+ * sort of drift nobody notices until an opponent is quietly weaker than the elo beside its name.
+ */
+export const deps = heuristicDeps;
 
 /**
  * The same search with a network at the leaf instead of the hand-written evaluation.
@@ -57,46 +44,7 @@ const cachedNet = (path) => {
 };
 
 /**
- * Priors over the legal actions, from the policy head, for PUCT.
- *
- * Two things happen here that the network cannot do for itself.
- *
- * The softmax is over the *legal* slots only, which is what makes the network's leaked probability
- * mass on impossible moves harmless -- 0.35 nats of its held-out error, and every bit of it
- * renormalised away here. The search knows the legal moves; the network never had to.
- *
- * And the action-to-slot map is deliberately many-to-one -- which gold you substitute, which token
- * you take when reserving -- so several legal actions can land in one slot. That slot's probability
- * is the group's, since the training target summed their visit counts to build it, so it is split
- * evenly back among them. Giving each the full value instead would inflate a group purely for being
- * large.
- */
-function policyPriors(net) {
-  return (state, actor, actions) => {
-    const logits = policyOf(net, encodeView(redactFor(actor, state), actor));
-    const slots = actions.map((a) => actionToIndex(a));
-
-    const shared = new Map();
-    let max = -Infinity;
-    for (const slot of slots) {
-      shared.set(slot, (shared.get(slot) ?? 0) + 1);
-      if (logits[slot] > max) max = logits[slot];
-    }
-    // Subtract the max before exponentiating: without it a confident logit overflows to Infinity and
-    // every prior comes back NaN, which PUCT would silently turn into "never select anything".
-    let total = 0;
-    const weight = new Map();
-    for (const slot of shared.keys()) {
-      const w = Math.exp((logits[slot] - max) / net.temperature);
-      weight.set(slot, w);
-      total += w;
-    }
-    return slots.map((slot) => weight.get(slot) / total / shared.get(slot));
-  };
-}
-
-/**
- * Deps for a network at the leaf, and optionally priors for PUCT.
+ * Deps for a network at the leaf, and optionally priors for PUCT, named by path.
  *
  * A dual checkpoint supplies both from one file: `--net` alone is enough, and no separate policy
  * path is needed. A single-headed value checkpoint still works and still takes a second file for the
@@ -104,51 +52,7 @@ function policyPriors(net) {
  */
 export function depsWithNet(path, policyPath) {
   const net = cachedNet(path);
-  const priorNet = policyPath ? cachedNet(policyPath) : net.kind === 'dual' ? net : null;
-  return {
-    ...deps,
-    ...(priorNet ? { priors: policyPriors(priorNet) } : {}),
-    /*
-     * Re-redacted at every leaf, deliberately. The state inside the tree is a *determinized* world
-     * with hidden information sampled, and the network was trained on redacted views -- so handing
-     * it the determinized state would feed it cards the player cannot see, at a scale it never saw
-     * in training. Redaction throws the sample away again, which is the correct thing: the sampled
-     * world decides which positions the search reaches, not what the evaluation is allowed to know.
-     */
-    evaluate: (state, seat) => valueOf(net, encodeView(redactFor(seat, state), seat)),
-  };
-}
-
-/**
- * Which move to actually play, given what the search found.
- *
- * Greedy on visit counts is right for measuring strength and wrong for generating training data. A
- * deal played greedily produces exactly one line, so a generation of self-play explores only the
- * moves the current network already prefers, and the next generation learns from a narrower slice of
- * the game than the one before it. AlphaZero's answer is to sample proportional to visits for the
- * opening and play greedily thereafter, and this is that.
- *
- * `visits ** (1/T)`: T=1 samples in proportion to visits, T below 1 sharpens toward the favourite,
- * and T at 0 is greedy. The exponent is applied to visit counts rather than to the search's value
- * estimates deliberately -- visits are the low-variance statistic, which is the same reason the
- * greedy choice uses them.
- *
- * The recorded policy target is untouched by any of this. `pi` is the visit distribution, which is
- * what the search concluded; sampling changes only which move gets played out of it.
- */
-function pickAction(ranking, moveNumber, explore, rng) {
-  if (!explore || explore.temperature <= 0 || moveNumber >= explore.moves) return ranking[0].action;
-  const weights = ranking.map((r) => Math.pow(r.visits, 1 / explore.temperature));
-  const total = weights.reduce((a, b) => a + b, 0);
-  if (!(total > 0)) return ranking[0].action;
-  // `RandomCursor` deals in integers, so a uniform float comes from a wide integer draw. 2^30 is
-  // far more resolution than a distribution over ~25 actions can use.
-  let pick = (rng.int(1 << 30) / (1 << 30)) * total;
-  for (let i = 0; i < ranking.length; i++) {
-    pick -= weights[i];
-    if (pick <= 0) return ranking[i].action;
-  }
-  return ranking[ranking.length - 1].action;
+  return netDeps(net, policyPath ? cachedNet(policyPath) : undefined);
 }
 
 function ismctsPlayer(config, record, netPath, explore, policyPath) {

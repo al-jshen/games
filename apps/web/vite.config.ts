@@ -13,6 +13,11 @@ export default defineConfig({
       { find: '@games/engine', replacement: fileURLToPath(new URL('../../packages/engine/src/index.ts', import.meta.url)) },
       { find: '@games/protocol', replacement: fileURLToPath(new URL('../../packages/protocol/src/index.ts', import.meta.url)) },
       { find: '@games/client-sdk', replacement: fileURLToPath(new URL('../../packages/client-sdk/src/index.ts', import.meta.url)) },
+      { find: '@games/net', replacement: fileURLToPath(new URL('../../packages/net/src/index.ts', import.meta.url)) },
+      // Ordered before `@games/bot-ismcts` would not matter -- these are distinct names -- but the
+      // bot packages are listed together because they are one feature: the opponent in the browser.
+      { find: '@games/bot-splendor-duel', replacement: fileURLToPath(new URL('../../packages/bot-splendor-duel/src/index.ts', import.meta.url)) },
+      { find: '@games/bot-ismcts', replacement: fileURLToPath(new URL('../../packages/bot-ismcts/src/index.ts', import.meta.url)) },
       { find: '@games/splendor-duel/ui', replacement: fileURLToPath(new URL('../../packages/games/splendor-duel/src/ui/index.tsx', import.meta.url)) },
       { find: '@games/splendor-duel', replacement: fileURLToPath(new URL('../../packages/games/splendor-duel/src/index.ts', import.meta.url)) },
       { find: '@games/tic-tac-toe/ui', replacement: fileURLToPath(new URL('../../packages/games/tic-tac-toe/src/ui/index.tsx', import.meta.url)) },

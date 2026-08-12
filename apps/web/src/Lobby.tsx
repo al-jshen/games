@@ -1,11 +1,14 @@
 import { normalizeCode } from '@games/protocol';
 import { CODE_LENGTH } from '@games/protocol';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { BOT_GAME, BOT_LEVELS, type BotLevelId } from './bot/bot.js';
+import { clearPendingBot, pendingBot, setPendingBot } from './bot/seats.js';
 import { hasBoard } from './games.js';
 import { closeMatch, listResumable, type ResumableMatch } from './resumable.js';
 import { client, useMatch } from './store.js';
 
 const NAME_KEY = 'games:name';
+const BOT_LEVEL_KEY = 'games:botLevel';
 
 export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
   const match = useMatch();
@@ -30,6 +33,38 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
   }, []);
 
   const create = (gameId: string) => client.createMatch(gameId, name || undefined);
+
+  /**
+   * Start a match and mark it as one the bot should join.
+   *
+   * The order matters and cannot be otherwise: the room does not have a code until the server names
+   * it, so the intent is parked and `useBot` claims it when the room opens. See `seats.ts`.
+   */
+  const [level, setLevel] = useState<BotLevelId>(
+    () => (localStorage.getItem(BOT_LEVEL_KEY) as BotLevelId | null) ?? 'normal',
+  );
+  const playBot = (chosen: BotLevelId) => {
+    localStorage.setItem(BOT_LEVEL_KEY, chosen);
+    setPendingBot({ level: chosen });
+    create(BOT_GAME);
+  };
+
+  /*
+   * "Play again" at the end of a bot game navigates here rather than asking for a rematch, and this
+   * is the other half of that. A rematch needs two players to agree and re-seats them both; a bot has
+   * no opinion to offer and the whole exchange would exist only to preserve a seat token through a
+   * page load. Creating a fresh match is the same thing without the ceremony.
+   */
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!ready || autoStarted.current) return;
+    const pending = pendingBot();
+    if (!pending?.autoStart) return;
+    autoStarted.current = true;
+    clearPendingBot();
+    playBot(pending.level);
+    // `playBot` re-parks the intent without `autoStart`, which is what `useBot` will claim.
+  }, [ready]);
 
   const join = (event: React.FormEvent) => {
     event.preventDefault();
@@ -83,6 +118,9 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
               <button type="button" disabled={!ready || !hasBoard(game.id)} onClick={() => create(game.id)}>
                 {hasBoard(game.id) ? 'Create match' : 'No UI yet'}
               </button>
+              {game.id === BOT_GAME && hasBoard(game.id) && (
+                <BotStarter level={level} onLevel={setLevel} disabled={!ready} onPlay={playBot} />
+              )}
             </article>
           ))}
         </div>
@@ -111,6 +149,52 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * Play on your own, against the network from the self-play loop.
+ *
+ * On the game's own card rather than in a section of its own, because it is a way to start *this*
+ * game and there is exactly one game that has a trained network. A second row here is honest about
+ * that; a "Bots" section listing one entry would not be.
+ *
+ * The level is a `select` and not three buttons because it is a setting rather than three ways to
+ * start — and because it is remembered, so the common case is one click on a choice made once.
+ */
+function BotStarter({
+  level,
+  onLevel,
+  disabled,
+  onPlay,
+}: {
+  level: BotLevelId;
+  onLevel: (level: BotLevelId) => void;
+  disabled: boolean;
+  onPlay: (level: BotLevelId) => void;
+}) {
+  const chosen = BOT_LEVELS.find((l) => l.id === level) ?? BOT_LEVELS[1];
+  return (
+    <div className="bot-start">
+      <div className="row">
+        <button type="button" disabled={disabled} onClick={() => onPlay(level)}>
+          Play the bot
+        </button>
+        <select
+          className="bot-level"
+          aria-label="Bot difficulty"
+          value={level}
+          onChange={(e) => onLevel(e.target.value as BotLevelId)}
+        >
+          {BOT_LEVELS.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="muted small">{chosen?.blurb}</p>
+    </div>
   );
 }
 

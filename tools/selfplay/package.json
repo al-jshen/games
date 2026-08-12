@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@games/bot-ismcts": "*",
+    "@games/bot-splendor-duel": "*",
     "@games/engine": "*",
+    "@games/net": "*",
     "@games/splendor-duel": "*"
   }
 }

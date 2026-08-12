@@ -1,0 +1,40 @@
+{
+  "layers": [
+    {
+      "in": 719,
+      "out": 512,
+      "activation": "relu"
+    },
+    {
+      "in": 512,
+      "out": 512,
+      "activation": "relu"
+    },
+    {
+      "in": 512,
+      "out": 238,
+      "activation": null
+    }
+  ],
+  "parameters": 753390,
+  "file": "weights.f32",
+  "kind": "policy",
+  "architecture": "wide",
+  "temperature": 0.9313761843272156,
+  "features": 719,
+  "slots": 238,
+  "held_out": {
+    "ce": 2.6407280374137363,
+    "raw": 2.721796189675369,
+    "top1": 0.4412984092008537,
+    "top5": 0.8057846307087689,
+    "mass": 0.23444278562924178,
+    "excess": 0.3207326341239414,
+    "at_one": 2.6402016550882097
+  },
+  "baselines": {
+    "uniform_over_visited": 2.9097101259145437,
+    "target_entropy": 2.319995403289795
+  },
+  "trained_on_datasets": 40
+}
