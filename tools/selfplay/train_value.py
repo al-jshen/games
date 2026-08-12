@@ -127,7 +127,7 @@ def report(name: str, pred: np.ndarray, z: np.ndarray, note: str = "") -> dict:
     return {"mse": mse, "accuracy": accuracy, "corr": corr}
 
 
-def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batch=8192,
+def fit(kind, x, target, z, train_idx, test_idx, epochs=40, decay=1e-4, batch=8192,
         lr=1e-3, init=None):
     """Train, and keep the parameters from the best held-out epoch rather than the last.
 
@@ -150,8 +150,8 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
     0.0018 with lambda=1 identical to four decimals -- so this is a free speedup rather than a
     different experiment.
     """
-    device = x_train.device
-    model = make_model(x_train.shape[1], kind)
+    device = x.device
+    model = make_model(x.shape[1], kind)
     if init:
         # Warm start, before the move to the device: the checkpoint reader works in numpy and the
         # copy is one-off, so there is nothing to gain from doing it on the GPU.
@@ -163,6 +163,18 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
         model.parameters(), lr=lr, weight_decay=decay, fused=device.type == "cuda"
     )
     loss_fn = nn.MSELoss()
+
+    def predict(idx):
+        """Forward over an index set, a batch at a time.
+
+        The held-out set used to be evaluated in one call, which was fine when it was a separate
+        tensor someone had already paid for. Addressed by index it would have to be gathered, and
+        gathering 3.4M rows of 719 floats to score them is a 10GB temporary on the device for no
+        reason -- the same arithmetic in batches needs none of it.
+        """
+        return torch.cat([model(x[idx[i : i + batch]]).squeeze(-1)
+                          for i in range(0, len(idx), batch)])
+
     best, best_state, best_epoch = float("inf"), None, 0
     if init:
         # Score the warm-started weights before training touches them, so epoch zero competes.
@@ -175,20 +187,23 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
         # incapable of going backwards on the holdout it is judged by.
         model.eval()
         with torch.no_grad():
-            best = float(loss_fn(model(x_test).squeeze(-1), z_test).item())
+            best = float(loss_fn(predict(test_idx), z[test_idx]).item())
         best_state = {k: v.clone() for k, v in model.state_dict().items()}
 
     for epoch in range(epochs):
         model.train()
-        order = torch.randperm(len(x_train), device=device)
+        # Shuffle the *index* rather than the rows. `train_idx` is one int64 per row -- 139MB at
+        # 17M rows against 40GB for the rows themselves -- so permuting it is free and the gather
+        # happens a batch at a time, on the device, where the weights already are.
+        order = train_idx[torch.randperm(len(train_idx), device=device)]
         for i in range(0, len(order), batch):
-            idx = order[i : i + batch]
+            sel = order[i : i + batch]
             opt.zero_grad()
-            loss_fn(model(x_train[idx]).squeeze(-1), target_train[idx]).backward()
+            loss_fn(model(x[sel]).squeeze(-1), target[sel]).backward()
             opt.step()
         model.eval()
         with torch.no_grad():
-            held = float(loss_fn(model(x_test).squeeze(-1), z_test).item())
+            held = float(loss_fn(predict(test_idx), z[test_idx]).item())
         if held < best:
             best, best_epoch = held, epoch + 1
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -196,7 +211,7 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        return model(x_test).squeeze(-1).cpu().numpy(), best_epoch, model
+        return predict(test_idx).cpu().numpy(), best_epoch, model
 
 
 def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
@@ -216,11 +231,18 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
                   + (f", net={w['config']['net']}" if (w.get("config") or {}).get("net") else ", no net"))
 
     z_test = data.z[test_mask]
-    device, (x_train, z_train, q_train, x_test, z_test_t) = resident(
-        pick_device(device_name),
-        data.x[train_mask], data.z[train_mask], data.q[train_mask], data.x[test_mask], z_test,
+    # The whole array goes across once and the split travels as two index vectors.
+    #
+    # `data.x[train_mask]` is boolean indexing, which cannot return a view, so it allocated a fresh
+    # copy of every selected row -- and train and test between them are the entire array, so the
+    # peak was the data twice over. At a window of four that was ~50GB of copies on top of ~67GB of
+    # arrays, and it was what the OOM killer found. Indices cost one int64 per row, 139MB, and the
+    # rows are gathered a batch at a time on the device.
+    device, (x_all, z_all, q_all) = resident(
+        pick_device(device_name), data.x, data.z, data.q,
     )
-    # From the shapes, not by re-indexing: `data.x[mask]` is a 5GB copy and it has been made already.
+    train_idx = torch.from_numpy(np.flatnonzero(train_mask)).to(device)
+    test_idx = torch.from_numpy(np.flatnonzero(test_mask)).to(device)
     gb = data.x.shape[0] * data.x.shape[1] * 4 / 1e9
     print(f"  training on {device}, {gb:.1f} GB of features resident, batch {batch}, {epochs} epochs\n")
 
@@ -257,11 +279,13 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
     models = {}
     for kind in kinds:
         for lam in lambdas:
-            target = (1 - lam) * z_train + lam * q_train
+            # Full length, aligned with `x`, so a batch's targets come from the same index as
+            # its rows. 69MB at 17M rows -- the blend is cheap; it was never the copies.
+            target = (1 - lam) * z_all + lam * q_all
             started = time.monotonic()
             pred, epoch, models[(kind, lam)] = fit(
-                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch, lr=lr,
-                init=init,
+                kind, x_all, target, z_all, train_idx, test_idx,
+                epochs=epochs, batch=batch, lr=lr, init=init,
             )
             # The epoch is worth seeing next to the score: a best epoch equal to the budget means the
             # run was still improving when it ran out, and the number below is a floor, not a result.

@@ -71,7 +71,7 @@ def cross_entropy(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 @torch.no_grad()
 def evaluate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor, temperature: float = 1.0,
-             chunk: int = 65536) -> dict:
+             chunk: int = 65536, idx: torch.Tensor | None = None) -> dict:
     """Held-out cross entropy, masked and not, plus top-k agreement and mass on the search's pick.
 
     **Masked is the number that decides this.** PUCT never sees a raw softmax over all 238 slots: the
@@ -92,10 +92,14 @@ def evaluate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor, temperature: f
     per intermediate, and there is no reason to hold the whole thing at once.
     """
     model.eval()
-    total_ce, masked_ce, top1, top5, mass, rows = 0.0, 0.0, 0, 0, 0.0, len(x)
+    # `idx` selects rows of `x` rather than a slice of it, so a caller can score a subset without
+    # first copying it out. The chunking was already here; this only changes what each chunk is.
+    total_ce, masked_ce, top1, top5, mass = 0.0, 0.0, 0, 0, 0.0
+    rows = len(idx) if idx is not None else len(x)
     for i in range(0, rows, chunk):
-        logits = model(x[i : i + chunk]) / temperature
-        target = pi[i : i + chunk]
+        sel = idx[i : i + chunk] if idx is not None else slice(i, i + chunk)
+        logits = model(x[sel]) / temperature
+        target = pi[sel]
         total_ce += float(-(target * torch.log_softmax(logits, dim=1)).sum())
 
         legal = target > 0
@@ -117,15 +121,15 @@ def evaluate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor, temperature: f
     }
 
 
-def fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=40, decay=1e-4, batch=8192,
+def fit(kind, slots, x, pi, train_idx, test_idx, epochs=40, decay=1e-4, batch=8192,
         lr=1e-3, init=None):
     """Train, keeping the parameters from the best held-out epoch. Same shape as the value trainer.
 
     Early stopping is on held-out cross entropy, which unlike the value head's case is the same
     quantity being fitted -- there is no blend here, so there is nothing to be circular about.
     """
-    device = x_train.device
-    model = make_model(x_train.shape[1], slots, kind)
+    device = x.device
+    model = make_model(x.shape[1], slots, kind)
     if init:
         print(warm_start(model, init), flush=True)
     model = model.to(device)
@@ -135,18 +139,19 @@ def fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=40, decay=1e-4, 
         # Epoch zero competes, for the same reason as in the value trainer: warm-started weights
         # already work, and a run that only makes them worse should keep them rather than ship the
         # least bad epoch of a bad run.
-        best = evaluate(model, x_test, pi_test)["ce"]
+        best = evaluate(model, x, pi, idx=test_idx)["ce"]
         best_state = {k: v.clone() for k, v in model.state_dict().items()}
 
     for epoch in range(epochs):
         model.train()
-        order = torch.randperm(len(x_train), device=device)
+        # The index is shuffled, not the rows: one int64 apiece against 719 floats apiece.
+        order = train_idx[torch.randperm(len(train_idx), device=device)]
         for i in range(0, len(order), batch):
-            idx = order[i : i + batch]
+            sel = order[i : i + batch]
             opt.zero_grad()
-            cross_entropy(model(x_train[idx]), pi_train[idx]).backward()
+            cross_entropy(model(x[sel]), pi[sel]).backward()
             opt.step()
-        held = evaluate(model, x_test, pi_test)["ce"]
+        held = evaluate(model, x, pi, idx=test_idx)["ce"]
         if held < best:
             best, best_epoch = held, epoch + 1
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -160,7 +165,8 @@ def fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=40, decay=1e-4, 
     return model, best_epoch
 
 
-def calibrate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor) -> float:
+def calibrate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor,
+              idx: torch.Tensor | None = None) -> float:
     """The temperature that makes the network's confidence match how often it is right.
 
     Cross entropy punishes a confident wrong answer far harder than it rewards a confident right one,
@@ -179,7 +185,7 @@ def calibrate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor) -> float:
     # it is allowed -- so an optimum sitting on the boundary is a finding, not a setting, and the
     # range has to be wide enough that hitting the edge means something. It is reported when it does.
     grid = np.geomspace(0.5, 64.0, 40)
-    best = float(min(grid, key=lambda t: evaluate(model, x, pi, temperature=float(t))["ce"]))
+    best = float(min(grid, key=lambda t: evaluate(model, x, pi, temperature=float(t), idx=idx)["ce"]))
     if best >= grid[-2]:
         print(f"    (temperature pinned at the top of the grid -- this model is being erased"
               f" into uniform rather than calibrated)")
@@ -231,10 +237,13 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
             print(f"    {w['dir']:<28} {w['games']:>6,} games, {w['rows']:>9,} rows"
                   + (f", net={w['config']['net']}" if (w.get("config") or {}).get("net") else ", no net"))
 
-    device, (x_train, pi_train, x_test, pi_test) = resident(
-        pick_device(device_name),
-        data.x[train_mask], data.pi[train_mask], data.x[test_mask], data.pi[test_mask],
-    )
+    # Whole arrays across once; the split travels as indices. Boolean indexing cannot return a
+    # view, so `data.x[train_mask]` allocated a copy of every selected row -- and train and test
+    # together are the whole array, so the peak held the data twice. ~66GB of that at a window of
+    # four, on top of the ~67GB the arrays already cost.
+    device, (x_all, pi_all) = resident(pick_device(device_name), data.x, data.pi)
+    train_idx = torch.from_numpy(np.flatnonzero(train_mask)).to(device)
+    test_idx = torch.from_numpy(np.flatnonzero(test_mask)).to(device)
     print(f"  training on {device}, batch {batch}, {epochs} epochs\n")
 
     pi_held = data.pi[test_mask]
@@ -256,19 +265,20 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
 
     # Held-out games split again, so the temperature is fitted on games the score never sees.
     cal_mask, score_mask = split_test(data.meta[test_mask, 0])
-    cal = torch.from_numpy(np.flatnonzero(cal_mask)).to(x_test.device)
-    scored = torch.from_numpy(np.flatnonzero(score_mask)).to(x_test.device)
+    # Indices into the held-out split, so they compose with it: `test_idx[cal]` is a global row.
+    cal = test_idx[torch.from_numpy(np.flatnonzero(cal_mask)).to(device)]
+    scored = test_idx[torch.from_numpy(np.flatnonzero(score_mask)).to(device)]
 
     results = {}
     models = {}
     for kind in kinds:
         started = time.monotonic()
-        model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs,
+        model, epoch = fit(kind, slots, x_all, pi_all, train_idx, test_idx, epochs=epochs,
                            batch=batch, lr=lr, init=init)
         elapsed = time.monotonic() - started
-        temperature = calibrate(model, x_test[cal], pi_test[cal])
-        at_one = evaluate(model, x_test[scored], pi_test[scored])
-        tuned = evaluate(model, x_test[scored], pi_test[scored], temperature=temperature)
+        temperature = calibrate(model, x_all, pi_all, idx=cal)
+        at_one = evaluate(model, x_all, pi_all, idx=scored)
+        tuned = evaluate(model, x_all, pi_all, idx=scored, temperature=temperature)
         note = f"   (epoch {epoch}/{epochs}, T {temperature:.2f}, {elapsed:.0f}s)"
         results[kind] = {**report(kind, tuned, floor, note), "at_one": at_one["ce"], "t": temperature}
         models[kind] = model

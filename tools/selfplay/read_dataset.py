@@ -33,6 +33,30 @@ class Dataset:
         return self.sidecar["seeds"][int(self.meta[row, 0])]
 
 
+def blob(path: Path, dtype: str) -> np.ndarray:
+    """Map a column instead of reading it into a private allocation.
+
+    The format was built for this without anyone planning it: raw contiguous little-endian floats
+    with the shape in a sidecar, which is exactly what `memmap` wants and exactly what `np.fromfile`
+    has to allocate for. Mapping costs nothing up front and the pages are the kernel's, so they are
+    reclaimable under pressure rather than a fixed charge against the job.
+
+    It matters most in `load_window`, which reads one generation at a time into a temporary and
+    copies it into a preallocated whole. That temporary used to be a real 17GB allocation on top of
+    the 67GB destination -- 84GB of peak to hold 67GB of data. Mapped, the copy streams and the peak
+    is the destination alone.
+
+    It does not make loading *free*: the validation below touches every element, so the bytes still
+    cross the network. What goes away is holding two copies of them at once.
+
+    An empty dataset cannot be mapped -- `mmap` refuses a zero-length file -- and that is a real
+    case here, since generation publishes a readable empty dataset before playing anything.
+    """
+    if path.stat().st_size == 0:
+        return np.empty(0, dtype=dtype)
+    return np.memmap(path, dtype=dtype, mode="r")
+
+
 def load(directory: str | Path) -> Dataset:
     d = Path(directory)
     sidecar = json.loads((d / "dataset.json").read_text())
@@ -69,14 +93,14 @@ def load(directory: str | Path) -> Dataset:
             if not optional:
                 raise KeyError(f"dataset at {d} has no {name!r} column")
             return np.zeros(rows if width == 1 else (rows, width), dtype="<f4")
-        return fit(np.fromfile(d / file, dtype="<f4"), name, width)
+        return fit(blob(d / file, "<f4"), name, width)
 
     x = column("x", width=f)
     pi = column("pi", width=p)
     z = column("z")
     q = column("q", optional=True)
     h = column("h", optional=True)
-    meta = fit(np.fromfile(d / sidecar["files"]["meta"], dtype="<i4"), "meta", 3)
+    meta = fit(blob(d / sidecar["files"]["meta"], "<i4"), "meta", 3)
 
     # Shapes are asserted rather than trusted: a layout change on the TypeScript side would otherwise
     # reshape silently into nonsense and train perfectly happily on it.
