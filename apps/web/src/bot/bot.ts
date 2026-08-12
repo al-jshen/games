@@ -126,3 +126,65 @@ export type FromBot =
   /** The bot followed a rematch into a new room and holds a seat there. */
   | { t: 'rematch'; code: string; token: string }
   | { t: 'error'; message: string };
+
+/* --------------------------------------------------------------- the coach */
+
+/**
+ * How hard the coach reads before answering, and how it is described.
+ *
+ * Lower than the levels the bot plays at, on purpose. The coach runs on *every* position including
+ * your opponent's, so it is asked three or four times as often as an opponent would be, and it is
+ * answering while somebody is waiting to move. `deep` is there for when you want to stop and study a
+ * position rather than keep the game going.
+ */
+export const COACH_DEPTHS = [
+  { id: 'quick', label: 'Quick', iterations: 150 },
+  { id: 'deep', label: 'Deep', iterations: 600 },
+] as const;
+
+export type CoachDepthId = (typeof COACH_DEPTHS)[number]['id'];
+
+export function coachIterations(depth: CoachDepthId): number {
+  return COACH_DEPTHS.find((d) => d.id === depth)?.iterations ?? 150;
+}
+
+export type ToCoach =
+  | { t: 'load'; base: string }
+  /**
+   * A position to look at. `seat` is whose side to report from, which is always the person asking --
+   * an evaluation that flipped sign depending on whose turn it was would be unreadable.
+   *
+   * `yourTurn` decides whether moves are suggested at all. The evaluation is wanted on both turns;
+   * a list of moves you cannot play is noise, and worse, it is a list of moves for your *opponent*
+   * that you are not entitled to reason about from the position they can see.
+   */
+  | { t: 'look'; id: number; view: unknown; seat: number; yourTurn: boolean; iterations: number };
+
+export interface CoachMove {
+  /** Already in the game's own words -- the worker cannot render, but it can name. */
+  text: string;
+  /** Share of the search's visits. The search's confidence, not the network's. */
+  visits: number;
+  /** The policy head's prior on this move, before any search. */
+  prior: number;
+  /** What the search thinks the position is worth after playing it, from your seat. */
+  value: number;
+}
+
+export type FromCoach =
+  | { t: 'ready' }
+  | {
+      t: 'read';
+      id: number;
+      /** The value head alone, in [-1, 1] from your seat. One forward pass, no search. */
+      staticValue: number;
+      /** The same head averaged over the search tree. Better, and slower. */
+      searchValue: number;
+      /** Best first. Empty when it is not your turn. */
+      moves: CoachMove[];
+      /** The policy head's own favourite, before search. Null when it is not your turn. */
+      instinct: string | null;
+      /** How long the search took, so the UI can be honest about why it is behind. */
+      ms: number;
+    }
+  | { t: 'error'; message: string };

@@ -11,6 +11,14 @@ Three programs, deliberately separate:
 Mixing the first two would mean every dataset carried whichever experimental toggles happened to be
 under test that day.
 
+`loop.py` drives all of it generation after generation, locally or over Slurm; `publish_bot.mjs`
+takes a generation the loop promoted and drops it into `apps/web/public/`, where it becomes the
+opponent people can play in the browser.
+
+```bash
+node tools/selfplay/publish_bot.mjs --run /mnt/ceph/users/you/games/loop --generation 3
+```
+
 ```bash
 npm run selfplay                                        # the A/B battery
 node tools/selfplay/generate.mjs --games 300 --out .data/gen0
@@ -31,7 +39,7 @@ count the files do not contain reads off the end, while one that trusts a count 
 truncates. Both readers cut to the published count for exactly this reason, and treat the short case
 — a genuinely damaged file — as an error. An interrupted dataset is a usable dataset.
 
-**Workers default to one fewer than the machine has.** There used to be a ceiling of 16, from when
+**Workers default to one per core.** There used to be a ceiling of 16, from when
 this only ever ran on a laptop, and it is expensive anywhere else: on 96 cores, lifting it took
 generation from 1.44 games/s to 4.41, or 4h49m down to 1h34m for 25,000 games. The parent looks like
 it should need more than one core — it packs ~340KB of `Float32Array` per game and appends six files

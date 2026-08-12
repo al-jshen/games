@@ -677,6 +677,102 @@ input:focus {
   color: var(--accent);
 }
 
+/* ---------------------------------------------------------------- the coach */
+
+.coach-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.coach-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  margin-bottom: 5px;
+}
+.coach-toggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.coach-controls {
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+/*
+ * Centre is level, and the bar fills from the left, so "ahead" reads as more of it. Deliberately
+ * unlabelled with a percentage: see `EvalBar`.
+ */
+.coach-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.coach-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6b5a2c, var(--accent));
+  transition: width 240ms ease-out;
+}
+.coach-bar-mid {
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: var(--line);
+}
+.coach-verdict {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.coach-verdict strong {
+  color: var(--accent);
+}
+.coach-numbers {
+  margin: 1px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.coach-sub {
+  margin: 9px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.coach-moves {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.coach-moves li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.coach-moves li.top {
+  color: var(--text);
+}
+.coach-move-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.coach-move-share {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
 /* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
 @media (max-height: 550px) {
   .app {

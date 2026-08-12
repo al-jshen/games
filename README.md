@@ -35,7 +35,30 @@ independent browser contexts through Chromium — pairing by code, taking tokens
 resolving pending decisions, refreshing mid-match, and playing tic-tac-toe to a win. Requires
 `npx playwright install chromium` once.
 
-### Play against a bot
+### Play the trained network, in the browser
+
+Start Splendor Duel from the lobby with **Play the bot**, at Easy, Normal or Hard. The opponent is the
+reigning generation from the self-play loop — the same network, running the same ISMCTS search the
+arena measured it with, in a web worker in your own browser. `Hard` is 1000 simulations a move, which
+is the operating point everything about that network was measured at; generation 3 beat the
+hand-written search 93% of the time there.
+
+Nothing in the server or the protocol knows about it. The worker opens its own socket, joins, and is
+given an ordinary seat — so the move log, undo, resuming after a reload and the replay afterwards all
+work on a bot match without anything special. That is possible because `determinize` and `encodeView`
+take a *view*: the bot searches under exactly the uncertainty its opponent does.
+
+In a game against a person, the **Coach** panel offers the same two heads as an advisor rather than as
+an opponent: an evaluation of the position on either player's turn, and a ranked list of moves on
+yours. It reads only your own view, so it cannot tell you anything you were not entitled to know.
+
+Promoting a newer generation is one command and no code change:
+
+```bash
+node tools/selfplay/publish_bot.mjs --run /path/to/loop --generation 4
+```
+
+### Play against a bot over the wire
 
 ```bash
 pip install 'websockets>=13'                                   # recommended
@@ -87,8 +110,11 @@ packages/engine/              GameModule interface, Redacted<>, seeded PRNG, mat
 packages/games/splendor-duel/ rules engine (headless) + ./ui (SVG board)
 packages/games/tic-tac-toe/   the canary that keeps the interface honest
 packages/client-sdk/          WS client: reconnect, prediction, typed submit. Used by web AND bots.
+packages/net/                 forward pass for the trained checkpoints. No IO: node and browser both.
+packages/bot-ismcts/          ISMCTS + PUCT, game-agnostic
+packages/bot-splendor-duel/   wires that search to this game, with or without a network
 apps/server/                  HTTP + WebSocket, rooms, sessions, replay log
-apps/web/                     Vite + React shell: lobby, room codes, move log
+apps/web/                     Vite + React shell: lobby, room codes, move log, the bot and the coach
 sdk/python/                   zero-dependency bot client + example bots
 tools/scrape-cards/           builds and validates the card data
 tools/verify-spiral/          re-derives the board spiral from the printed art

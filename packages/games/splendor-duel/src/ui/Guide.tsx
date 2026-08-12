@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { tryCard } from '../cards.js';
+import { cardLabel } from '../describe.js';
 import type { GemColor, PlayerView, SplendorAction, SplendorView } from '../types.js';
 import { GEM_COLORS, TOKEN_LIMIT, WIN_COLOR_PRESTIGE, WIN_CROWNS, WIN_PRESTIGE } from '../types.js';
 
@@ -344,21 +345,12 @@ const CHEATSHEET: { heading: string; items: string[] }[] = [
 
 /* ------------------------------------------------------------------ readable names */
 
-/** A compact, human-readable name for a card, for the move log and tooltips. */
-export function cardLabel(cardId: string | null): string {
-  if (!cardId) return 'a card';
-  const def = tryCard(cardId);
-  if (!def) return 'a card';
-  if (def.kind === 'royal') return `a royal (${def.points} ${def.points === 1 ? 'pt' : 'pts'})`;
-
-  const colour = def.wild ? 'wild' : (def.bonusColor ?? 'no-bonus');
-  const parts = [`L${def.level} ${colour}`];
-  if (def.bonusCount > 1) parts.push(`x${def.bonusCount}`);
-  const extras: string[] = [];
-  if (def.points > 0) extras.push(`${def.points} ${def.points === 1 ? 'pt' : 'pts'}`);
-  if (def.crowns > 0) extras.push(`${def.crowns} crown${def.crowns > 1 ? 's' : ''}`);
-  return extras.length > 0 ? `${parts.join(' ')} (${extras.join(', ')})` : parts.join(' ');
-}
+/*
+ * `cardLabel` and `describeAction` live in `../describe.js`, not here: the coach's worker needs them
+ * and cannot import a module that pulls in React and a stylesheet. Re-exported so this file stays
+ * the one place the UI looks for the game's vocabulary.
+ */
+export { cardLabel, describeAction } from '../describe.js';
 
 /**
  * Turn one effect into a log line, in the game's own vocabulary.

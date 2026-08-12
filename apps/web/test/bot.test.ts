@@ -1,13 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { GameClient } from '@games/client-sdk';
-import { netDeps } from '@games/bot-splendor-duel';
-import { makeNet, type Sidecar } from '@games/net';
 import { legalActionsFromView, type SplendorView } from '@games/splendor-duel';
 import { startServer, type RunningServer } from '../../server/src/server.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Engine } from '../src/bot/engine.js';
 import { startBot } from '../src/bot/player.js';
+import { publishedEngine } from './published-engine.js';
 
 /**
  * The bot opponent, against the real server.
@@ -21,20 +18,6 @@ import { startBot } from '../src/bot/player.js';
  * It also loads the checkpoints that `apps/web/public` actually ships, so a bad publish is caught
  * here rather than by a player watching a blank sidebar.
  */
-
-const PUBLIC = fileURLToPath(new URL('../public/bots/splendor-duel/gen3', import.meta.url));
-
-/** The published checkpoints, read off disk instead of over HTTP. Same bytes, same `makeNet`. */
-function engineFromDisk(): Engine {
-  const head = (name: string) => {
-    const sidecar = JSON.parse(readFileSync(`${PUBLIC}/${name}/model.json`, 'utf8')) as Sidecar;
-    const buf = readFileSync(`${PUBLIC}/${name}/${sidecar.file}`);
-    return makeNet(sidecar, new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4), name);
-  };
-  const value = head('value');
-  const policy = head('policy');
-  return { value, policy, deps: netDeps(value, policy) };
-}
 
 function memoryStorage() {
   const map = new Map<string, string>();
@@ -63,7 +46,7 @@ describe('the bot opponent', () => {
   beforeAll(async () => {
     server = await startServer({ port: 0, host: '127.0.0.1', storeKind: 'memory', quiet: true });
     url = `${server.url.replace('http', 'ws')}/ws`;
-    engine = engineFromDisk();
+    engine = publishedEngine();
   });
 
   afterAll(async () => {

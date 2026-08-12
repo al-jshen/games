@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { BOT_BASE, type BotManifest } from './bot/bot.js';
+import { BOT_BASE, BOT_GAME, type BotManifest } from './bot/bot.js';
+import { Coach } from './bot/Coach.js';
 import { setPendingBot } from './bot/seats.js';
 import { useBot, type BotStatus } from './bot/useBot.js';
+import { useCoach } from './bot/useCoach.js';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
 import { describeEffect } from './effects.js';
 import { seatTransferLink } from './resumable.js';
@@ -35,6 +37,27 @@ export function Room({ onLeave }: { onLeave: () => void }) {
   const outcome = match.confirmed?.outcome;
   const over = outcome?.status === 'over';
   const bothHere = match.players.length === 2 && match.players.every((p) => p.connected);
+  const yourTurn = match.seat !== null && match.actors.includes(match.seat);
+
+  /*
+   * Offered in games between people, and not against the bot. Playing the bot's own network for
+   * advice on how to beat it is not analysis, it is the bot playing both sides — and a panel telling
+   * you the move your opponent is about to make would empty the game out.
+   */
+  const coachable = match.gameId === BOT_GAME && !bot.active;
+  const coach = useCoach(
+    {
+      // The server's confirmed position, not `match.view` -- that carries an unacknowledged local
+      // move, and evaluating a position the server has not agreed to yet would be reading a board
+      // that may be about to snap back.
+      view: match.confirmed?.view ?? null,
+      seat: match.seat,
+      yourTurn,
+      version: match.version,
+      over,
+    },
+    coachable,
+  );
 
   /*
    * The rematch arrives as a seat token, already stored. Navigating is what enters it — a full load
@@ -125,6 +148,8 @@ export function Room({ onLeave }: { onLeave: () => void }) {
             )}
           </section>
         )}
+
+        {coachable && !over && <Coach coach={coach} yourTurn={yourTurn} />}
 
         {GameSidebar && (
           <GameSidebar

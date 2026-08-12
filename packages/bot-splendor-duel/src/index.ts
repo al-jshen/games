@@ -72,28 +72,69 @@ export const heuristicDeps: SplendorSearchDeps = {
  * evenly back among them. Giving each the full value instead would inflate a group purely for being
  * large.
  */
-function policyPriors(net: Net) {
-  return (state: SplendorState, actor: Seat, actions: readonly SplendorAction[]): readonly number[] => {
-    const logits = policyOf(net, encodeView(redactFor(actor, state), actor as 0 | 1));
-    const slots = actions.map((a) => actionToIndex(a));
+function priorsOverLegal(
+  logits: Float64Array,
+  actions: readonly SplendorAction[],
+  temperature: number,
+): number[] {
+  const slots = actions.map((a) => actionToIndex(a));
 
-    const shared = new Map<number, number>();
-    let max = -Infinity;
-    for (const slot of slots) {
-      shared.set(slot, (shared.get(slot) ?? 0) + 1);
-      if ((logits[slot] as number) > max) max = logits[slot] as number;
-    }
-    // Subtract the max before exponentiating: without it a confident logit overflows to Infinity and
-    // every prior comes back NaN, which PUCT would silently turn into "never select anything".
-    let total = 0;
-    const weight = new Map<number, number>();
-    for (const slot of shared.keys()) {
-      const w = Math.exp(((logits[slot] as number) - max) / net.temperature);
-      weight.set(slot, w);
-      total += w;
-    }
-    return slots.map((slot) => (weight.get(slot) as number) / total / (shared.get(slot) as number));
-  };
+  const shared = new Map<number, number>();
+  let max = -Infinity;
+  for (const slot of slots) {
+    shared.set(slot, (shared.get(slot) ?? 0) + 1);
+    if ((logits[slot] as number) > max) max = logits[slot] as number;
+  }
+  // Subtract the max before exponentiating: without it a confident logit overflows to Infinity and
+  // every prior comes back NaN, which PUCT would silently turn into "never select anything".
+  let total = 0;
+  const weight = new Map<number, number>();
+  for (const slot of shared.keys()) {
+    const w = Math.exp(((logits[slot] as number) - max) / temperature);
+    weight.set(slot, w);
+    total += w;
+  }
+  return slots.map((slot) => (weight.get(slot) as number) / total / (shared.get(slot) as number));
+}
+
+function policyPriors(net: Net) {
+  return (state: SplendorState, actor: Seat, actions: readonly SplendorAction[]): readonly number[] =>
+    // Re-redacted because the search's state is a determinized world. See `netDeps`.
+    priorsOverLegal(policyOf(net, encodeView(redactFor(actor, state), actor as 0 | 1)), actions, net.temperature);
+}
+
+/**
+ * The policy head's opinion, on its own, with no search around it.
+ *
+ * Exactly the priors PUCT would use -- same softmax, same renormalisation over legal slots, same
+ * splitting of a shared slot -- exposed so something other than the search can read them. One
+ * forward pass, so it is instant, and it is the network's *instinct* rather than its conclusion: on
+ * held-out data its favourite matches a 1000-iteration search's choice 44% of the time.
+ *
+ * Takes a view rather than a state, because the only caller is looking at a position from a seat and
+ * has never had anything else.
+ *
+ * Sorted best first, which is what a reader wants and what the search's own `ranking` gives.
+ */
+export function policyRanking(
+  net: Net,
+  view: SplendorView,
+  seat: Seat,
+  actions: readonly SplendorAction[],
+): { action: SplendorAction; prior: number }[] {
+  const priors = priorsOverLegal(policyOf(net, encodeView(view, seat as 0 | 1)), actions, net.temperature);
+  return actions.map((action, i) => ({ action, prior: priors[i] ?? 0 })).sort((a, b) => b.prior - a.prior);
+}
+
+/**
+ * The value head's opinion of a position, from `seat`'s point of view, in [-1, 1].
+ *
+ * One forward pass and no search, which is both its appeal and its limit: measured on held-out
+ * positions it gets the eventual winner's sign right 69% of the time. Worth showing next to a
+ * searched estimate rather than instead of one.
+ */
+export function netValue(net: Net, view: SplendorView, seat: Seat): number {
+  return valueOf(net, encodeView(view, seat as 0 | 1));
 }
 
 /**
