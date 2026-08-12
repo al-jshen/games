@@ -532,8 +532,15 @@ class Loop:
                    "--temperature", str(cfg.get("temperature", 0)),
                    "--temperature-moves", str(cfg.get("temperature_moves", 15))]
         command += self.workers("selfplay", cfg)
+        if cfg.get("search"):
+            command += ["--search", json.dumps(cfg["search"])]
         if self.state["best"]["value"]:
             command += ["--net", self.state["best"]["value"]]
+            # Generation zero has no policy net, and needs none: PUCT without priors falls back to
+            # UCB1's expansion phase on its own, so `selection: puct` can be set from the start and
+            # simply becomes true once there is something to consult.
+            if cfg.get("use_policy") and self.state["best"]["policy"]:
+                command += ["--policy", self.state["best"]["policy"]]
 
         self.runner.run(Task(
             name=f"gen{generation}-selfplay",
@@ -758,8 +765,15 @@ class Loop:
         for anchor in self.anchors():
             path, task = self.play_task(
                 anchor["report"], generation,
+                # Our side must search the way the loop actually searches, priors included. Leaving
+                # the policy out here while the gate uses it would quietly measure a configuration
+                # nobody ships -- a weaker one -- and the anchor series would understate the thing
+                # it exists to track. Note that turning this on mid-run puts a one-off step in the
+                # series, worth about the elo the priors are worth; the anchors themselves do not
+                # move, so it stays readable, but it is a step and not progress.
                 {"spec": json.dumps(cfg.get("search", {})), "label": f"gen{generation} best",
-                 "net": self.state["best"]["value"]},
+                 "net": self.state["best"]["value"],
+                 "policy": self.state["best"]["policy"] if cfg.get("use_policy") else None},
                 {"spec": anchor["spec"], "label": anchor["name"], "net": anchor.get("net")},
                 cfg,
             )

@@ -81,6 +81,27 @@ const MINE = Math.floor(((SHARD_ID + 1) * GAMES) / NUM_SHARDS) - FIRST;
  */
 const NET = flag('net', null);
 /*
+ * The policy network, supplying priors to a `selection: puct` search.
+ *
+ * Separate from `--net` because they are separate checkpoints; a dual-headed one would carry both
+ * and need only `--net`. Priors are what makes PUCT more than a different formula: without them the
+ * search falls back to UCB1's expansion phase, deliberately and silently, which is exactly what
+ * generation zero wants since it has no policy net to consult.
+ *
+ * Measured at 1000 iterations with gen-1's heads, 1000 games: +27 elo [+6, +49] over UCB1 for
+ * priors at the root alone. Small, but it clears zero, where the earlier 200-game attempt returned
+ * [-27, 69] and could not say.
+ */
+const POLICY = flag('policy', null);
+/*
+ * Anything else about the search, as JSON merged over the defaults -- the same shape `arena.mjs`
+ * takes for its players. A flag apiece would mean a new flag every time the search grows a knob,
+ * and the loop already has to pass this through from config, so it may as well pass it whole.
+ *
+ *   --search '{"selection":"puct","puctExploration":4,"puctDepth":0}'
+ */
+const SEARCH = JSON.parse(flag('search', '{}'));
+/*
  * Sampling the played move in proportion to visit counts, for the opening only.
  *
  * Without it a deal is played out one way and one way only, so a generation explores just the lines
@@ -113,7 +134,7 @@ const TEMPERATURE = Number(flag('temperature', '0'));
 const TEMPERATURE_MOVES = Number(flag('temperature-moves', '15'));
 const explore = TEMPERATURE > 0 ? { temperature: TEMPERATURE, moves: TEMPERATURE_MOVES } : null;
 
-const config = { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...(NET ? { leaf: 'evaluate' } : {}) };
+const config = { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...(NET ? { leaf: 'evaluate' } : {}), ...SEARCH };
 const seeds = Array.from({ length: MINE }, (_, i) => `gen-${FIRST + i}`);
 
 /*
@@ -137,8 +158,8 @@ const jobs = seeds.map((seed, game) => {
     record: true,
     // Both seats searched, so every position is a training row rather than half of them.
     aFirst: index % 2 === 0,
-    a: { kind: 'ismcts', config: { ...config, seed: `a${index}` }, net: NET, explore },
-    b: { kind: 'ismcts', config: { ...config, seed: `b${index}` }, net: NET, explore },
+    a: { kind: 'ismcts', config: { ...config, seed: `a${index}` }, net: NET, policy: POLICY, explore },
+    b: { kind: 'ismcts', config: { ...config, seed: `b${index}` }, net: NET, policy: POLICY, explore },
   };
 });
 
@@ -151,7 +172,7 @@ const duration = (seconds) => {
 console.log(
   `Generating ${MINE} games at ${ITERATIONS} iterations on ${WORKERS} worker(s), ` +
     `${NUM_SHARDS > 1 ? `shard ${SHARD_ID} of ${NUM_SHARDS} (games ${FIRST}..${FIRST + MINE - 1} of ${GAMES}), ` : ''}` +
-    `leaf=${config.leaf}${NET ? ` net=${NET}` : ''}` +
+    `leaf=${config.leaf} select=${config.selection}${NET ? ` net=${NET}` : ''}${POLICY ? ` policy=${POLICY}` : ''}` +
     `${explore ? `, sampling at T=${TEMPERATURE} for ${TEMPERATURE_MOVES} moves` : ', greedy'}…`,
 );
 const started = Date.now();
@@ -164,7 +185,7 @@ const writer = await openDataset(OUT, {
   policyLayout: POLICY_LAYOUT,
   // `net` beside `config` because it is part of what produced these rows. A dataset that does not
   // record which network searched it cannot be placed in the sequence of generations later.
-  config: { ...config, net: NET, explore, shard: { id: SHARD_ID, of: NUM_SHARDS, first: FIRST, games: MINE, total: GAMES } },
+  config: { ...config, net: NET, policy: POLICY, explore, shard: { id: SHARD_ID, of: NUM_SHARDS, first: FIRST, games: MINE, total: GAMES } },
   generatedAt: new Date().toISOString(),
 });
 
