@@ -350,17 +350,29 @@ class SlurmRunner:
         code = proc.returncode
         job = (proc.stdout or "").strip().splitlines()
         if job:
-            lock.write_text(f"{lock.read_text().strip()}\njob {job[0]}\n")
+            # Recording the id is bookkeeping, and bookkeeping must not be able to destroy the
+            # result. The lock can be gone for reasons that have nothing to do with the job -- a
+            # cleanup that took the run directory with it, someone clearing a stale lock by hand --
+            # and in every one of those cases the job still ran and its outcome is still the thing
+            # worth reporting. Losing the note is survivable; losing the verdict is not.
+            try:
+                lock.write_text(f"{lock.read_text().strip()}\njob {job[0]}\n")
+            except OSError as error:
+                print(f"  (could not record job {job[0]} in {named(lock)}: {error})", flush=True)
         if proc.stderr.strip():
             print(f"  {proc.stderr.strip()}", flush=True)
 
+        # Released before the verdict, not after. The lock guards against resubmitting a job that
+        # may still be *running*, and `--wait` having returned means this one is not: it has
+        # terminated, well or badly, and nothing is still writing to the run directory. Keeping it
+        # on a failure would leave a lock behind for a job that is definitely finished, and the next
+        # run would stop and ask about it for no reason.
+        lock.unlink(missing_ok=True)
         if task.ok is not None and code not in task.ok:
             raise SystemExit(
                 f"\n  {task.name} failed ({code}); job {job[0] if job else '?'}.\n"
-                f"  Its output is in {named(task.log)}; the lock at {named(lock)} is kept so a\n"
-                f"  restart does not resubmit on top of anything still running."
+                f"  Its output is in {named(task.log)}."
             )
-        lock.unlink(missing_ok=True)
         print(f"\n  ✓ {duration(time.monotonic() - started)}   log: {named(task.log)}", flush=True)
 
 
