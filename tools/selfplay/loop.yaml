@@ -168,7 +168,28 @@ training:
 arena:
   games: 300               # 120 games resolves about +-62 elo; 300 gets you to roughly +-40
   iterations: 1000
-  threshold: 0.55          # AlphaGo Zero's number. AlphaZero skipped gating; it had 44M games
+  # 0.50: promote anything that is not measurably worse, rather than only what is measurably better.
+  #
+  # 0.55 was AlphaGo Zero's number and it was the right one while every generation was an
+  # independent refit from random weights -- such a fit can land anywhere, so a candidate had to
+  # prove itself before being allowed to generate the next round of data. Warm starting removes that
+  # premise: a candidate now begins from the incumbent's weights, so the outcome it is most likely
+  # to have is "much the same", and much the same is exactly what 0.55 throws away.
+  #
+  # Generation 2 scored 0.49 and was rejected. It would fail this threshold too -- 147-153 is under
+  # either -- so the point is not that number but the regime it reveals: candidates land near 50%,
+  # and at 300 games the interval is about +-40 elo, so clearing 0.55 reliably means being genuinely
+  # 35+ elo better. Demanding that every round is how a loop stalls rather than how it stays honest,
+  # and it means a generation that improved slightly is indistinguishable from one that did nothing.
+  #
+  # The gate stays because the direction still matters: a candidate that is genuinely worse scores
+  # below 0.50 and is still refused, which is the regression this exists to stop. What changes is
+  # that ties now go to the newer model, which has seen more data.
+  #
+  # One consequence worth knowing: against an identical model the score is a coin flip, so roughly
+  # half of no-change generations will promote. That is harmless -- promoting a model of the same
+  # strength costs nothing -- but "accepted" in the history stops meaning "improved".
+  threshold: 0.50
   workers: null
   use_policy: true         # priors are only read under `selection: puct`
   search:
