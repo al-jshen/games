@@ -258,7 +258,11 @@ class SlurmRunner:
         if cfg.get("cpus_per_node") is not None:
             out.append(f"--cpus-per-task={cfg['cpus_per_node']}")
         for key, flag in (("partition", "--partition"), ("time", "--time"),
-                          ("gres", "--gres"), ("mem", "--mem"), ("qos", "--qos")):
+                          ("gres", "--gres"), ("mem", "--mem"), ("qos", "--qos"),
+                          # `-C`. Node features: which CPU generation the shards land on, which
+                          # card the trainer gets. Both matter here -- self-play throughput is the
+                          # cost dial, and whether a window fits in GPU memory is decided by it.
+                          ("constraint", "--constraint")):
             if cfg.get(key) is not None:
                 out.append(f"{flag}={cfg[key]}")
         if self.config.get("account"):
