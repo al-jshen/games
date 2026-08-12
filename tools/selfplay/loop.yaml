@@ -19,7 +19,7 @@
 #
 # See docs/selfplay-on-slurm.md.
 runner:
-  kind: local              # local | slurm
+  kind: slurm              # local | slurm
 
   slurm:
     account: null          # --account, when the cluster wants one
@@ -31,10 +31,11 @@ runner:
     # gen{N}/shard{i}/. The trainer reads them all without a merge, so these two numbers are the
     # whole of the scaling: how many machines, and how much of each.
     selfplay:
-      nodes: 128
-      cpus_per_node: 64
-      partition: null
-      time: "04:00:00"
+      nodes: 10
+      cpus_per_node: 96
+      partition: cca
+      constraint: genoa     
+      time: "02:00:00"
       # A preempted node should not discard the work the others did. Any exit code is accepted and
       # the generation is judged by how many games reached the disk; below this fraction it stops.
       quorum: 1.0
@@ -43,16 +44,20 @@ runner:
     train:
       nodes: 1
       cpus_per_node: 8
-      gres: null           # e.g. "gpu:1"
-      partition: null
-      time: "02:00:00"
+      gres: "gpu:1"
+      partition: gpu
+      constraint: h100     # -C, e.g. "a100" or "h100". Which card decides whether a
+                           # window's features fit in memory before resident() falls back
+      time: "01:00:00"
 
     # One node. Not sharded: at 300 games against 25,000 the arena is not where the time goes, and
     # splitting it would need a report-merge step for no measured gain.
     arena:
       nodes: 1
-      cpus_per_node: 64
-      partition: null
+      cpus_per_node: 96
+      partition: cca
+      constraint: genoa
+                           # means less if the hardware under it keeps changing
       time: "01:00:00"
 
 run:
@@ -67,8 +72,8 @@ run:
   # which is the one thing the resumability here cannot protect against. Somewhere durable for a
   # run worth keeping:
   #
-  #   dir: /mnt/ceph/users/jshen/games/loop
-  dir: /dev/shm/loop
+  dir: /mnt/ceph/users/jshen/games/loop
+  # dir: /dev/shm/loop
   generations: 5
   # Where to start. Omitted, so this is a cold start: generation 0 is played with the hand-written
   # evaluation, which is exactly how the first dataset was ever made.
@@ -81,12 +86,12 @@ run:
   #   policy: .data/models/policy-gen0
 
 selfplay:
-  games: 25000
+  games: 50000
   # The main cost dial, and the one real decision here. On 12 cores, 25,000 games is ~6h at 300 and
   # ~24h at 1232 -- the network leaf buys 4.1x the iterations for the same wall clock, so 1232 costs
   # what 300 used to. Deeper search makes sharper policy targets; more games is the lever the value
   # head has actually been measured to want. There is no free answer.
-  iterations: 300
+  iterations: 1000
   workers: null            # null = one per core
   # Sampling the opening in proportion to visit counts. Off, because at 300 iterations over ~76 legal
   # moves the visit distribution is uniform to within a rounding error and sampling from it is not
@@ -105,8 +110,8 @@ training:
     epochs: 40             # measured: 200 epochs moves held-out MSE by ~0.001. 40 is enough.
     batch: 8192            # measured across 256..16384; the spread is inside holdout noise
     lr: 0.001              # scaling with batch was tried and helped nowhere -- Adam already does it
-    arch: [tiny]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
-    lambda: [0.6]          # target = (1-l)*outcome + l*search value; 0.6 won at 25k games
+    arch: [mlp]           # the ladder [linear, tiny, mlp] diagnoses data-bound vs capacity-bound
+    lambda: [0.0]          # target = (1-l)*outcome + l*search value; 0.6 won at 25k games
 
   policy:
     epochs: 80             # measured: still improving at 40, best epoch 76 of 80
@@ -117,7 +122,7 @@ training:
 # The gate. Candidate against incumbent, promote only on a win.
 arena:
   games: 300               # 120 games resolves about +-62 elo; 300 gets you to roughly +-40
-  iterations: 300
+  iterations: 1000
   threshold: 0.55          # AlphaGo Zero's number. AlphaZero skipped gating; it had 44M games
   workers: null
   use_policy: false        # priors are only read under `selection: puct`
@@ -130,8 +135,22 @@ arena:
 baseline:
   enabled: true
   games: 60
-  iterations: 300
-  opponent: random         # saturates fast; swap for a fixed spec to keep resolving, e.g.
-                           #   opponent: '{"leaf":"mixed","iterations":300}'
+  iterations: 1000         # applies to *our* side; each anchor pins its own below
   workers: null
   search: {}
+  # Several opponents, because one is not enough in two different ways. They saturate at different
+  # times -- `random` is already pinned at 100% against an untrained generation 0 and measures
+  # nothing after that, while the heuristic search keeps resolving for a long while -- so a set
+  # spans a range and something is always still moving. And playing strength is not a total order:
+  # a loop can drift into beating one opponent's particular weaknesses while going nowhere in
+  # general, which is the failure a baseline exists to catch and the one a single opponent cannot.
+  #
+  # An anchor is only an anchor while it holds still, so pin its iterations inside its own spec.
+  # The spec beats the --iterations flag in arena.mjs, so an anchor written this way survives a
+  # later change to the loop's operating point. Do not edit these numbers once a run has started;
+  # the series stops meaning anything if the opponent moves.
+  opponents:
+    - name: random
+      spec: random
+    - name: heuristic
+      spec: '{"leaf":"mixed","iterations":1000}'
