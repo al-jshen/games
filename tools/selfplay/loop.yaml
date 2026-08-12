@@ -48,7 +48,17 @@ runner:
       partition: gpu
       constraint: h100     # -C, e.g. "a100" or "h100". Which card decides whether a
                            # window's features fit in memory before resident() falls back
-      time: "01:00:00"
+      # Host memory, and it must be asked for: the default is per-CPU, so 8 cpus got 64GB and the
+      # policy trainer was OOM-killed inside load_window before printing a line.
+      #
+      # A window of 4 is ~17.3M rows. The arrays alone are ~67GB (x 50, pi 17), load_window holds
+      # one generation more while copying it in (+17), and `resident` boolean-masks the splits into
+      # fresh copies before moving them to the GPU (+66 at peak). So ~133GB for the policy head,
+      # ~117GB for the value head. This scales linearly with `training.window` -- doubling the
+      # window doubles every number above.
+      mem: "256G"
+      # Loading ~67GB off Ceph dominates, and 150/200 epochs over 17M rows is no longer seconds.
+      time: "02:00:00"
 
     # One node. Not sharded: at 300 games against 25,000 the arena is not where the time goes, and
     # splitting it would need a report-merge step for no measured gain.
