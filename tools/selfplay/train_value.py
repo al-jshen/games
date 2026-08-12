@@ -30,7 +30,7 @@ import torch
 from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
-from checkpoint import save  # noqa: E402
+from checkpoint import save, warm_start  # noqa: E402
 from read_dataset import load_window  # noqa: E402
 
 torch.manual_seed(7)
@@ -127,7 +127,8 @@ def report(name: str, pred: np.ndarray, z: np.ndarray, note: str = "") -> dict:
     return {"mse": mse, "accuracy": accuracy, "corr": corr}
 
 
-def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batch=8192, lr=1e-3):
+def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batch=8192,
+        lr=1e-3, init=None):
     """Train, and keep the parameters from the best held-out epoch rather than the last.
 
     Without early stopping this measures how thoroughly a model can memorise 300 games, which is not
@@ -150,7 +151,12 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
     different experiment.
     """
     device = x_train.device
-    model = make_model(x_train.shape[1], kind).to(device)
+    model = make_model(x_train.shape[1], kind)
+    if init:
+        # Warm start, before the move to the device: the checkpoint reader works in numpy and the
+        # copy is one-off, so there is nothing to gain from doing it on the GPU.
+        print(warm_start(model, init), flush=True)
+    model = model.to(device)
     # `fused` on CUDA for the same reason the device was chosen: a step here is launch-bound, and the
     # fused optimiser collapses a per-parameter kernel each into one. Same Adam, same update.
     opt = torch.optim.Adam(
@@ -158,6 +164,19 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
     )
     loss_fn = nn.MSELoss()
     best, best_state, best_epoch = float("inf"), None, 0
+    if init:
+        # Score the warm-started weights before training touches them, so epoch zero competes.
+        #
+        # Without this the sweep can only ever return a *trained* epoch, and a warm start makes that
+        # a real hazard rather than a formality: the starting point is now a model that already
+        # works, and a couple of epochs at this learning rate can leave it worse than it began. The
+        # gate would catch that and reject the generation, which is a whole generation spent to
+        # learn nothing. Keeping the initial weights when nothing beats them makes a warm start
+        # incapable of going backwards on the holdout it is judged by.
+        model.eval()
+        with torch.no_grad():
+            best = float(loss_fn(model(x_test).squeeze(-1), z_test).item())
+        best_state = {k: v.clone() for k, v in model.state_dict().items()}
 
     for epoch in range(epochs):
         model.train()
@@ -182,7 +201,7 @@ def fit(kind, x_train, target_train, x_test, z_test, epochs=40, decay=1e-4, batc
 
 def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
          save_to: str | None = None, kinds=("linear", "tiny", "mlp"),
-         lambdas=None, lr: float = 1e-3) -> int:
+         lambdas=None, lr: float = 1e-3, init: str | None = None) -> int:
     data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     print(f"{data.x.shape[0]:,} positions, {data.x.shape[1]} features")
@@ -241,7 +260,8 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
             target = (1 - lam) * z_train + lam * q_train
             started = time.monotonic()
             pred, epoch, models[(kind, lam)] = fit(
-                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch, lr=lr
+                kind, x_train, target, x_test, z_test_t, epochs=epochs, batch=batch, lr=lr,
+                init=init,
             )
             # The epoch is worth seeing next to the score: a best epoch equal to the budget means the
             # run was still improving when it ran out, and the number below is a floor, not a result.
@@ -352,6 +372,11 @@ if __name__ == "__main__":
     parser.add_argument("--lambda", dest="lambdas", nargs="+", type=float, default=None,
                         help="value target blends to try; one value skips the sweep")
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--init",
+        help="a checkpoint directory to start from instead of random initialisation. Ignored, with "
+             "a note, if its architecture does not match -- so changing --arch mid-run is safe.",
+    )
     args = parser.parse_args()
     raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save,
-                          tuple(args.arch), args.lambdas, args.lr))
+                          tuple(args.arch), args.lambdas, args.lr, args.init))

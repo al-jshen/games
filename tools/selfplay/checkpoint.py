@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 from torch import nn
 
 ACTIVATIONS = {nn.ReLU: "relu", nn.Tanh: "tanh"}
@@ -47,6 +48,54 @@ def describe(model: nn.Module) -> list[dict]:
     if not layers:
         raise ValueError("model has no linear layers")
     return layers
+
+
+def warm_start(model: nn.Module, directory: str | Path) -> str:
+    """Load a checkpoint's weights into `model`, if the two are the same shape.
+
+    Returns a sentence about what happened, for the caller to print. It never raises on a mismatch
+    and never partially loads: a checkpoint whose layers disagree with the model is simply not
+    applicable, which is the ordinary case when the architecture changed between generations, and
+    the honest response is to say so and train from scratch. Half-loading would be the one outcome
+    worse than either.
+
+    The reader is the mirror of `save`: layer order, `weight` then `bias`, `nn.Linear` holding its
+    weight as (out, in) and written row-major. Getting the transpose wrong here would produce a
+    model that runs, returns plausible numbers, and is wrong -- so the shapes are checked against
+    the sidecar rather than inferred from the file's length.
+    """
+    d = Path(directory)
+    sidecar = json.loads((d / "model.json").read_text())
+    wanted = describe(model)
+    def shape(layers: list[dict]) -> str:
+        """`719-32-1`. Includes the input width, because a feature-size mismatch is otherwise
+        invisible -- two models can agree on every output and still disagree about what they eat."""
+        return "-".join([str(layers[0]["in"])] + [str(l["out"]) for l in layers])
+
+    if [(l["in"], l["out"], l["activation"]) for l in sidecar["layers"]] != [
+        (l["in"], l["out"], l["activation"]) for l in wanted
+    ]:
+        return (f"  no warm start: {d.name} is {shape(sidecar['layers'])} where this model is "
+                f"{shape(wanted)} -- training from scratch")
+
+    flat = np.fromfile(d / sidecar["file"], dtype="<f4")
+    if flat.size != sidecar["parameters"]:
+        return (f"  no warm start: {d.name} holds {flat.size} parameters, sidecar claims "
+                f"{sidecar['parameters']} -- training from scratch")
+
+    at = 0
+    with torch.no_grad():
+        for module in ([model] if isinstance(model, nn.Linear) else list(model)):
+            if not isinstance(module, nn.Linear):
+                continue
+            size = module.weight.numel()
+            module.weight.copy_(torch.from_numpy(flat[at : at + size]).view_as(module.weight))
+            at += size
+            size = module.bias.numel()
+            module.bias.copy_(torch.from_numpy(flat[at : at + size]).view_as(module.bias))
+            at += size
+    assert at == flat.size, f"read {at} of {flat.size} parameters"
+    return f"  warm started from {d.name}"
 
 
 def save(model: nn.Module, directory: str | Path, **meta) -> Path:

@@ -620,6 +620,17 @@ class Loop:
             command += ["--lambda", *[str(v) for v in (blends if isinstance(blends, list) else [blends])]]
         if self.config["training"].get("device"):
             command += ["--device", str(self.config["training"]["device"])]
+        # Warm start from the reigning checkpoint rather than random weights.
+        #
+        # The incumbent, not the previous generation, and the difference matters after a rejection:
+        # generation 2 lost its gate, so generation 3 should carry on from generation 1 -- the best
+        # weights anyone has -- rather than from a candidate already judged worse. It is the same
+        # model self-play is using, which keeps one notion of "where we are" instead of two.
+        #
+        # Safe when the architecture changes: the loader compares layer shapes and declines, saying
+        # so, rather than half-loading. And safe at generation zero, which has no incumbent.
+        if self.config["training"].get("warm_start") and self.state["best"][head]:
+            command += ["--init", self.state["best"][head]]
         return out, Task(
             name=f"gen{generation}-train-{head}",
             command=command,

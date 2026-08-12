@@ -29,7 +29,7 @@ import torch
 from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
-from checkpoint import save  # noqa: E402
+from checkpoint import save, warm_start  # noqa: E402
 from read_dataset import load_window  # noqa: E402
 from train_value import pick_device, resident, split_by_game  # noqa: E402
 
@@ -117,16 +117,26 @@ def evaluate(model: nn.Module, x: torch.Tensor, pi: torch.Tensor, temperature: f
     }
 
 
-def fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=40, decay=1e-4, batch=8192, lr=1e-3):
+def fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=40, decay=1e-4, batch=8192,
+        lr=1e-3, init=None):
     """Train, keeping the parameters from the best held-out epoch. Same shape as the value trainer.
 
     Early stopping is on held-out cross entropy, which unlike the value head's case is the same
     quantity being fitted -- there is no blend here, so there is nothing to be circular about.
     """
     device = x_train.device
-    model = make_model(x_train.shape[1], slots, kind).to(device)
+    model = make_model(x_train.shape[1], slots, kind)
+    if init:
+        print(warm_start(model, init), flush=True)
+    model = model.to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=decay, fused=device.type == "cuda")
     best, best_state, best_epoch = float("inf"), None, 0
+    if init:
+        # Epoch zero competes, for the same reason as in the value trainer: warm-started weights
+        # already work, and a run that only makes them worse should keep them rather than ship the
+        # least bad epoch of a bad run.
+        best = evaluate(model, x_test, pi_test)["ce"]
+        best_state = {k: v.clone() for k, v in model.state_dict().items()}
 
     for epoch in range(epochs):
         model.train()
@@ -206,7 +216,7 @@ def split_test(meta_games: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def main(directories, device_name: str | None = None, batch: int = 8192, epochs: int = 40,
          save_to: str | None = None, kinds=("linear", "tiny", "mlp", "wide"),
-         lr: float = 1e-3) -> int:
+         lr: float = 1e-3, init: str | None = None) -> int:
     data = load_window(directories)
     train_mask, test_mask = split_by_game(data)
     slots = data.pi.shape[1]
@@ -253,7 +263,8 @@ def main(directories, device_name: str | None = None, batch: int = 8192, epochs:
     models = {}
     for kind in kinds:
         started = time.monotonic()
-        model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs, batch=batch, lr=lr)
+        model, epoch = fit(kind, slots, x_train, pi_train, x_test, pi_test, epochs=epochs,
+                           batch=batch, lr=lr, init=init)
         elapsed = time.monotonic() - started
         temperature = calibrate(model, x_test[cal], pi_test[cal])
         at_one = evaluate(model, x_test[scored], pi_test[scored])
@@ -334,6 +345,11 @@ if __name__ == "__main__":
     parser.add_argument("--arch", nargs="+", default=["linear", "tiny", "mlp", "wide"],
                         help="which capacities to try; one name skips the sweep")
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--init",
+        help="a checkpoint directory to start from instead of random initialisation. Ignored, "
+             "with a note, if its architecture does not match.",
+    )
     args = parser.parse_args()
     raise SystemExit(main(args.directories, args.device, args.batch, args.epochs, args.save,
-                          tuple(args.arch), args.lr))
+                          tuple(args.arch), args.lr, args.init))

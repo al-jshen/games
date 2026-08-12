@@ -132,6 +132,17 @@ training:
   # 50 minutes on CPU; on the GPU it is under 30 seconds, so the reason to keep it narrow is gone.
   window: 4
   device: null             # null = cuda if present
+  # Start each generation from the reigning checkpoint instead of random weights.
+  #
+  # Every generation used to refit from scratch, which is the largest source of variance between
+  # them and the reason the gate is load-bearing: an independent fit on a shifted window can land
+  # anywhere, where AlphaZero's continuous SGD cannot. It also threw away everything the previous
+  # generation had learned, every time.
+  #
+  # From the *incumbent*, not the previous generation -- after a rejection those differ, and the
+  # rejected candidate is the one already judged worse. Declines with a note if the architecture
+  # changed, so `arch` stays safe to edit mid-run.
+  warm_start: true
 
   value:
     epochs: 40             # measured: 200 epochs moves held-out MSE by ~0.001. 40 is enough.
