@@ -20,7 +20,7 @@ import './splendor.css';
 
 // Re-exported so the app shell can render a move log in this game's own vocabulary rather than
 // printing raw card ids.
-export { describeEffect, cardLabel } from './Guide.tsx';
+export { describeEffect, describeAction, cardLabel } from './Guide.tsx';
 
 /**
  * The Splendor Duel board.
