@@ -156,9 +156,14 @@ This is the one genuinely new failure mode. Kill `loop.py` while a four-hour sel
 running, restart it, and the artefact does not exist yet — so it happily submits a second array
 writing to the same directories. Two writers, interleaved appends, a corrupt dataset.
 
-Record the job id in `state.json` as each step is submitted, and clear it on completion. On startup,
-if a step has a recorded id, query it **once** with `sacct -j <id>` and either attach and wait, or
-clear it if it is long dead. One query per step at startup, not a poll loop.
+A lock file per step, written under `<run>/slurm/locks/` at submission and removed on completion,
+closes the window without asking the scheduler anything at all. On startup the loop refuses to
+proceed while any lock is present, and prints the `squeue` invocation to check with.
+
+Deliberately not self-healing. The obvious refinement is to query `sacct -j <id>` once and clear the
+lock if the job is long dead, but deciding on your behalf that a job has died is exactly the
+judgement that should not be automated: guess wrong and two writers interleave into the same blobs.
+Removing a stale lock is one `rm` and the message says so.
 
 ### `sbatch --wait` returns non-zero if any array task failed
 

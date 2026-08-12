@@ -405,9 +405,15 @@ class Loop:
         """How many pieces a generation of self-play is cut into: one per node.
 
         `runner.slurm.selfplay.nodes` is both the number of machines and the width of the job
-        array, because each node runs one generator over its own slice. One by default, which is a
-        single process writing a single dataset -- the local behaviour, unchanged.
+        array, because each node runs one generator over its own slice.
+
+        It governs the Slurm backend only. Locally there is one machine, and honouring a node count
+        meant for a cluster would turn a laptop run into 128 sequential generators of 195 games
+        each -- the same total work, dressed up as a hundred-odd steps. So a local run is one shard
+        and behaves exactly as it always did, and switching backends needs no second edit.
         """
+        if self.runner.kind != "slurm":
+            return 1
         cfg = ((self.config.get("runner") or {}).get("slurm") or {}).get("selfplay") or {}
         return max(1, int(cfg.get("nodes", 1)))
 
