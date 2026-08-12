@@ -10,7 +10,7 @@ import type { Engine } from '../src/bot/engine.js';
  * Same bytes and the same `makeNet`, so a bad publish is caught by a test rather than by a player
  * watching a blank sidebar. `loadEngine` differs from this only in where the two files come from.
  */
-export const PUBLISHED = fileURLToPath(new URL('../public/bots/splendor-duel/gen3', import.meta.url));
+export const PUBLISHED = fileURLToPath(new URL('../public/bots/splendor-duel/current', import.meta.url));
 
 export function publishedEngine(): Engine {
   const head = (name: string) => {

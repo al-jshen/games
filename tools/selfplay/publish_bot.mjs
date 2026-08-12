@@ -41,18 +41,30 @@ const run = flag('run');
 const generation = flag('generation');
 const game = flag('game', 'splendor-duel');
 const into = flag('into', join(ROOT, 'apps/web/public/bots'));
+/*
+ * `current`, not `gen3`, and the difference is the whole point of the script.
+ *
+ * The client fetches a fixed path. If that path carried the generation number, promoting gen4 would
+ * mean editing a constant in `apps/web/src/bot/bot.ts` and remembering to -- which is exactly the
+ * kind of step that gets missed, leaving the site quietly serving a generation older than the one
+ * somebody just published. The generation is recorded *in* `bot.json` instead, so the panel can say
+ * which one you are playing without the URL having to.
+ *
+ * `--as` puts a copy somewhere else, for keeping two side by side to compare.
+ */
+const label = flag('as', 'current');
 
 if (!run || generation === null) {
-  console.error('usage: publish_bot.mjs --run <loop dir> --generation <n> [--game splendor-duel] [--into <dir>]');
+  console.error('usage: publish_bot.mjs --run <loop dir> --generation <n> [--as current] [--game splendor-duel] [--into <dir>]');
   process.exit(2);
 }
 
-const label = `gen${generation}`;
+const source = `gen${generation}`;
 const destination = join(into, game, label);
 
 /** One checkpoint directory, copied with its sidecar slimmed. Returns what to say about it. */
 function publish(head) {
-  const from = join(run, 'models', `${label}-${head}`);
+  const from = join(run, 'models', `${source}-${head}`);
   const to = join(destination, head);
   mkdirSync(to, { recursive: true });
 
@@ -77,7 +89,7 @@ function publish(head) {
   };
 }
 
-console.log(`publishing ${label} from ${run}`);
+console.log(`publishing ${source} from ${run} as ${label}`);
 const value = publish('value');
 const policy = publish('policy');
 
@@ -105,7 +117,7 @@ try {
 }
 
 const manifest = {
-  id: label,
+  id: source,
   game,
   generation: Number(generation),
   published: new Date().toISOString().slice(0, 10),

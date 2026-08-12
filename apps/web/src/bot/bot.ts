@@ -7,8 +7,14 @@
  * `apps/server`. See `worker.ts`.
  */
 
-/** Where `tools/selfplay/publish_bot.mjs` puts checkpoints, relative to the site root. */
-export const BOT_BASE = '/bots/splendor-duel/gen3';
+/**
+ * Where `tools/selfplay/publish_bot.mjs` puts the reigning checkpoints, relative to the site root.
+ *
+ * Deliberately not named after a generation. Promoting gen4 is `publish_bot.mjs --generation 4` and
+ * nothing else; which generation is sitting here is recorded in `bot.json` and read at runtime, so
+ * this constant never has to be kept in step with anything.
+ */
+export const BOT_BASE = '/bots/splendor-duel/current';
 
 /** Only game with an encoder, a policy layout and a trained net. The rest have no bot to offer. */
 export const BOT_GAME = 'splendor-duel';

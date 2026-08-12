@@ -29,7 +29,21 @@ export interface PendingBot {
   level: BotLevelId;
   /** Set by "play again", which navigates to the lobby and wants it to start a match on arrival. */
   autoStart?: boolean;
+  /** When it was parked. See `STALE_MS`. */
+  at?: number;
 }
+
+/**
+ * How long a parked intent stays good.
+ *
+ * The gap it is meant to bridge is one round trip -- click "Play the bot", the server names the
+ * room, the room opens -- and that is under a second. Anything older is an intent that never got
+ * used, and the failure it prevents is the bad one: `createMatch` fails, the intent sits in session
+ * storage, the player joins a friend's game by code half an hour later, and a bot walks into it.
+ * The Lobby also clears it on any other way into a room; this is the backstop for the ways that do
+ * not go through the Lobby, like a deep link.
+ */
+const STALE_MS = 60_000;
 
 function read<T>(store: Storage, key: string): T | null {
   try {
@@ -68,11 +82,17 @@ export function forgetBotSeat(code: string): void {
 }
 
 export function pendingBot(): PendingBot | null {
-  return read<PendingBot>(sessionStorage, PENDING_KEY);
+  const pending = read<PendingBot>(sessionStorage, PENDING_KEY);
+  if (!pending) return null;
+  if (typeof pending.at === 'number' && Date.now() - pending.at > STALE_MS) {
+    clearPendingBot();
+    return null;
+  }
+  return pending;
 }
 
 export function setPendingBot(pending: PendingBot): void {
-  write(sessionStorage, PENDING_KEY, pending);
+  write(sessionStorage, PENDING_KEY, { ...pending, at: Date.now() });
 }
 
 export function clearPendingBot(): void {

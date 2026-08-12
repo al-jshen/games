@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BOT_BASE, BOT_GAME, type BotManifest } from './bot/bot.js';
 import { Coach } from './bot/Coach.js';
 import { setPendingBot } from './bot/seats.js';
-import { useBot, type BotStatus } from './bot/useBot.js';
+import { isBotMatch, useBot, type BotStatus } from './bot/useBot.js';
 import { useCoach } from './bot/useCoach.js';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
 import { describeEffect } from './effects.js';
@@ -44,7 +44,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
    * advice on how to beat it is not analysis, it is the bot playing both sides — and a panel telling
    * you the move your opponent is about to make would empty the game out.
    */
-  const coachable = match.gameId === BOT_GAME && !bot.active;
+  const coachable = match.gameId === BOT_GAME && !bot.active && !isBotMatch(match.code);
   const coach = useCoach(
     {
       // The server's confirmed position, not `match.view` -- that carries an unacknowledged local

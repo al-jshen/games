@@ -8,7 +8,7 @@
 import { normalizeCode } from '@games/protocol';
 import { useEffect, useState } from 'react';
 import { BOT_BASE, BOT_GAME, levelById, type BotLevel, type FromBot, type ToBot } from './bot.js';
-import { botSeat, claimPendingBot, rememberBotSeat } from './seats.js';
+import { botSeat, claimPendingBot, pendingBot, rememberBotSeat } from './seats.js';
 
 export interface BotStatus {
   /** A bot is seated in this room. False for a match between people. */
@@ -91,9 +91,12 @@ export function useBot(code: string | null, gameId: string | null): BotStatus {
     worker.postMessage(start);
 
     return () => {
-      worker.postMessage({ t: 'stop' } satisfies ToBot);
-      // The `stop` above closes the socket politely; this stops the search, which does not check for
-      // messages while it is running and would otherwise finish a move nobody is waiting for.
+      /*
+       * Terminated rather than asked to stop. A `stop` message would have to wait for the worker to
+       * come back to its event loop, and a search does not -- it is a synchronous tree walk, so the
+       * message would sit unread until the bot had finished deciding a move for a room nobody is in.
+       * Terminating closes its socket for it, which is the only cleanup that was ever needed.
+       */
       worker.terminate();
       setStatus(IDLE);
     };
@@ -102,7 +105,14 @@ export function useBot(code: string | null, gameId: string | null): BotStatus {
   return status;
 }
 
-/** Whether this room has a bot in it, without starting one. For UI that renders before the worker does. */
-export function hasBot(code: string | null): boolean {
-  return code !== null && botSeat(normalizeCode(code)) !== null;
+/**
+ * Whether this room is a bot match, answered synchronously — before `useBot`'s effect has run.
+ *
+ * Needed because `active` cannot be known on the first render: the effect that claims the intent
+ * runs after it. One frame of the wrong answer would be invisible for most things, but the coach
+ * panel starts a worker and fetches 3MB on mount, so it would happen and then immediately be undone.
+ */
+export function isBotMatch(code: string | null): boolean {
+  if (code === null) return false;
+  return botSeat(normalizeCode(code)) !== null || pendingBot() !== null;
 }

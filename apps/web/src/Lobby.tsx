@@ -32,7 +32,17 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
     };
   }, []);
 
-  const create = (gameId: string) => client.createMatch(gameId, name || undefined);
+  /*
+   * Every way into a room that is *not* "play the bot" clears the parked intent first.
+   *
+   * Otherwise a click that never produced a match -- the server refused, the socket dropped -- leaves
+   * an intent behind, and the next room this browser walks into gets a bot seated in it. Which room
+   * that is could easily be a friend's.
+   */
+  const create = (gameId: string) => {
+    clearPendingBot();
+    client.createMatch(gameId, name || undefined);
+  };
 
   /**
    * Start a match and mark it as one the bot should join.
@@ -45,8 +55,9 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
   );
   const playBot = (chosen: BotLevelId) => {
     localStorage.setItem(BOT_LEVEL_KEY, chosen);
-    setPendingBot({ level: chosen });
+    // After `create`, which clears any earlier one -- the order matters.
     create(BOT_GAME);
+    setPendingBot({ level: chosen });
   };
 
   /*
@@ -70,6 +81,7 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
     event.preventDefault();
     const normalized = normalizeCode(code);
     if (normalized.length !== CODE_LENGTH) return;
+    clearPendingBot();
     client.joinMatch(normalized, name || undefined);
   };
 
