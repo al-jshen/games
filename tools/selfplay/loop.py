@@ -669,42 +669,97 @@ class Loop:
             cfg,
         )
 
-    def baseline(self, generation: int) -> dict | None:
-        """The reigning model against an opponent that never changes.
+    def anchors(self) -> list[dict]:
+        """The fixed opponents, as `{name, spec, net, report}`.
+
+        Several rather than one, for two reasons. They saturate at different times -- `random` is
+        pinned at 100% before the first generation is trained and measures nothing thereafter, while
+        the heuristic search keeps resolving for a long while -- so a set spans a range and at least
+        one of them is always still saying something. And playing strength is not a total order: a
+        loop can drift into beating one opponent's particular weaknesses while going nowhere in
+        general, which is precisely what a baseline exists to catch and precisely what a single
+        opponent cannot see.
+
+        The older single-`opponent` form still works and keeps its report name, so an existing run
+        resumes without replaying anything.
+        """
+        cfg = self.config.get("baseline")
+        if not cfg or not cfg.get("enabled", True):
+            return []
+        entries = cfg.get("opponents")
+        if not entries:
+            return [{"name": cfg.get("opponent", "random"), "spec": cfg.get("opponent", "random"),
+                     "net": cfg.get("opponent_net"), "report": "baseline"}]
+        out = []
+        for entry in entries:
+            if isinstance(entry, str):
+                entry = {"name": entry, "spec": entry}
+            name = entry["name"]
+            out.append({"name": name, "spec": entry.get("spec", name),
+                        "net": entry.get("opponent_net"), "report": f"baseline-{name}"})
+        return out
+
+    def baseline(self, generation: int) -> dict:
+        """The reigning model against opponents that never change. `{name: report}`.
 
         The gate only ever compares neighbours, so a loop can clear it every time and still be going
         nowhere -- 56% against something 56% better than the thing before it is not the same as
         getting stronger, and the gate cannot tell the difference. This can.
 
-        `random` is the default opponent and it is the weakest useful one: it will saturate at 100%
-        almost immediately and then measure nothing. Any spec works, so the more informative anchor
-        is a fixed configuration that does not move -- the original heuristic search, say -- which
-        keeps resolving long after random has stopped.
+        An anchor is only an anchor while it holds still. Pin the opponent's iteration count inside
+        its own spec rather than leaving it to `baseline.iterations`, which the loop's operating
+        point may drag along with it -- the spec wins over the flag in `arena.mjs`, so an anchor
+        written that way survives a change of mind about the search.
         """
-        cfg = self.config.get("baseline")
-        if not cfg or not cfg.get("enabled", True):
-            return None
-        opponent = cfg.get("opponent", "random")
-        return self.play(
-            "baseline", generation,
-            {"spec": json.dumps(cfg.get("search", {})), "label": f"gen{generation} best",
-             "net": self.state["best"]["value"]},
-            {"spec": opponent, "label": opponent if opponent == "random" else "anchor",
-             "net": cfg.get("opponent_net")},
-            cfg,
-        )
+        cfg = self.config.get("baseline") or {}
+        results = {}
+        for anchor in self.anchors():
+            results[anchor["name"]] = self.play(
+                anchor["report"], generation,
+                {"spec": json.dumps(cfg.get("search", {})), "label": f"gen{generation} best",
+                 "net": self.state["best"]["value"]},
+                {"spec": anchor["spec"], "label": anchor["name"], "net": anchor.get("net")},
+                cfg,
+            )
+        return results
 
     def progress_table(self) -> None:
+        """One row per generation, one column per anchor.
+
+        Columns are collected from the history rather than from the config, so a run whose anchors
+        changed part way through still prints every series it has, and a history written before
+        there were several -- when `baseline` was a single number -- still prints too.
+        """
         rows = [h for h in self.state["history"]]
         if not rows:
             return
+
+        names: list[str] = []
+        for h in rows:
+            recorded = h.get("baseline")
+            if isinstance(recorded, dict):
+                names += [n for n in recorded if n not in names]
+            elif recorded is not None and "baseline" not in names:
+                names.append("baseline")
+
+        def cells(h: dict) -> str:
+            recorded = h.get("baseline")
+            out = ""
+            for name in names:
+                if isinstance(recorded, dict):
+                    score = recorded.get(name)
+                else:
+                    score = recorded if name == "baseline" else None
+                out += f"{(f'{score:.1%}' if score is not None else '—'):>14}"
+            return out
+
         print(f"\n{RULE}\n  progress so far\n{RULE}")
-        print("  gen   gate score   verdict     vs baseline      model")
+        print("  gen   gate score   verdict  "
+              + "".join(f"{('vs ' + n):>14}" for n in names) + "      model")
         for h in rows:
             gate = f"{h['score']:.1%}" if h.get("score") is not None else "unopposed"
-            base = f"{h['baseline']:.1%}" if h.get("baseline") is not None else "—"
             mark = "accepted" if h["accepted"] else "rejected"
-            print(f"  {h['generation']:>3}   {gate:>10}   {mark:<9}   {base:>11}      "
+            print(f"  {h['generation']:>3}   {gate:>10}   {mark:<9}{cells(h)}      "
                   f"{Path(h['candidate']['value']).name}")
         print(flush=True)
 
@@ -757,15 +812,18 @@ class Loop:
                 # loop, and deleting it is how you end up unable to answer why it stalled.
                 print(f"  keeping incumbent: {self.state['best']['value']}")
 
-            baseline_score = None
+            baseline_score = {}
             if steps == 4:
-                step(4, steps, "baseline — reigning model vs a fixed opponent (absolute progress)")
-                base = self.baseline(generation)
-                if base:
-                    baseline_score = base["score"]
+                anchors = self.anchors()
+                step(4, steps, f"baseline — reigning model vs {len(anchors)} fixed "
+                               f"opponent{'s' if len(anchors) != 1 else ''} "
+                               f"({', '.join(a['name'] for a in anchors)}) — absolute progress")
+                for name, base in self.baseline(generation).items():
+                    baseline_score[name] = base["score"]
                     low, high = base["ci"]
-                    print(f"\n  {base['winsA']}-{base['winsB']}   score {baseline_score:.1%}   "
-                          f"95% CI [{low:.1%}, {high:.1%}]   elo {base['elo']:+.0f}")
+                    print(f"\n  vs {name}: {base['winsA']}-{base['winsB']}   "
+                          f"score {base['score']:.1%}   95% CI [{low:.1%}, {high:.1%}]   "
+                          f"elo {base['elo']:+.0f}")
 
             self.state["history"].append({
                 "generation": generation, "candidate": candidate, "accepted": accepted,
