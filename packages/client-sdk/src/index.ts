@@ -99,6 +99,18 @@ function defaultUrl(): string {
   return `${scheme}://${location.host}/ws`;
 }
 
+/**
+ * Where a seat token is kept, given a room code.
+ *
+ * Exported because the client is not the only thing that reasons about these. The web app lists
+ * resumable matches by walking storage for this prefix, and the bot opponent keeps its own seat
+ * token under a *different* prefix precisely so it does not show up in that list — both of which
+ * need to know the shape, and neither of which should be guessing it.
+ */
+export function seatTokenKey(code: string): string {
+  return `match:${normalizeCode(code)}`;
+}
+
 let actionCounter = 0;
 function newActionId(): string {
   actionCounter += 1;
@@ -169,7 +181,7 @@ export class GameClient {
   }
 
   private tokenKey(code: string): string {
-    return `match:${code}`;
+    return seatTokenKey(code);
   }
 
   private saveToken(code: string, token: string): void {

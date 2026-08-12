@@ -1,4 +1,4 @@
-import { unseal } from '@games/engine';
+import { unseal, type Seat } from '@games/engine';
 import { apply, legalActions, redactFor, setup } from '@games/splendor-duel';
 import type { SplendorState, SplendorView } from '@games/splendor-duel';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -178,7 +178,8 @@ describe('the move log', () => {
    * of things that did not happen.
    */
   it('credits the scroll from a replenish to the opponent, not to whoever replenished', () => {
-    let found: { actor: 0 | 1; effects: Record<string, unknown>[] } | null = null;
+    // `Seat`, not `0 | 1`: that is what `state.turn` is and what `describeEffect` takes.
+    let found: { actor: Seat; effects: Record<string, unknown>[] } | null = null;
     for (const state of statesAlongAGame('replenish-log', 200)) {
       const replenish = legalActions(state, state.turn).actions.find((a) => a.t === 'replenish');
       if (!replenish) continue;

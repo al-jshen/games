@@ -20,7 +20,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const PACKAGES = ['packages/engine', 'packages/bot-ismcts', 'packages/games/splendor-duel'];
+const PACKAGES = [
+  'packages/engine',
+  'packages/net',
+  'packages/bot-ismcts',
+  'packages/bot-splendor-duel',
+  'packages/games/splendor-duel',
+];
 
 /** Newest mtime under a directory, or 0 if it does not exist. */
 function newest(dir) {

@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { BOT_BASE, type BotManifest } from './bot/bot.js';
+import { setPendingBot } from './bot/seats.js';
+import { useBot, type BotStatus } from './bot/useBot.js';
 import { loadBoard, type BoardModule, type EffectDescriber } from './games.js';
 import { describeEffect } from './effects.js';
 import { seatTransferLink } from './resumable.js';
@@ -7,6 +10,7 @@ import { client, useMatch } from './store.js';
 
 export function Room({ onLeave }: { onLeave: () => void }) {
   const match = useMatch();
+  const bot = useBot(match.code, match.gameId);
   const [board, setBoardModule] = useState<BoardModule | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const Board = board?.default ?? null;
@@ -46,7 +50,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
       <UndoDialog describe={board?.describeEffect} />
 
       <aside className="sidebar">
-        <ShareCode code={match.code} waiting={waiting} />
+        {bot.active ? <BotPanel bot={bot} /> : <ShareCode code={match.code} waiting={waiting} />}
 
         <section className="panel compact">
           <h3>Players</h3>
@@ -58,7 +62,11 @@ export function Room({ onLeave }: { onLeave: () => void }) {
                   {player.name}
                   {player.you ? ' (you)' : ''}
                 </span>
-                {match.actors.includes(player.seat) && !over && <span className="turn-flag">to move</span>}
+                {match.actors.includes(player.seat) && !over && (
+                  <span className="turn-flag">
+                    {bot.thinking && !player.you ? 'thinking' : 'to move'}
+                  </span>
+                )}
                 {!player.connected && <span className="muted"> away</span>}
               </li>
             ))}
@@ -80,9 +88,27 @@ export function Room({ onLeave }: { onLeave: () => void }) {
               {outcome.reason === 'stalled' && 'Stall limit reached (house rule).'}
             </p>
             <div className="row">
-              <button type="button" onClick={() => client.requestRematch()} disabled={!bothHere}>
-                Rematch
-              </button>
+              {bot.active ? (
+                /*
+                 * A fresh match rather than a rematch, deliberately. A rematch is an agreement
+                 * between two people that re-seats them both in a new room; the bot has no opinion
+                 * to offer and the only thing the exchange would achieve is carrying its seat token
+                 * through a page load. This asks the lobby to start another one, at the same level.
+                 */
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingBot({ level: bot.level?.id ?? 'normal', autoStart: true });
+                    onLeave();
+                  }}
+                >
+                  Play again
+                </button>
+              ) : (
+                <button type="button" onClick={() => client.requestRematch()} disabled={!bothHere}>
+                  Rematch
+                </button>
+              )}
               <button type="button" className="mini" onClick={onLeave}>
                 Back to lobby
               </button>
@@ -92,7 +118,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
                 </a>
               )}
             </div>
-            {!bothHere && (
+            {!bothHere && !bot.active && (
               <p className="muted small">
                 A rematch needs your opponent here — it seats you both, so there is no code to send.
               </p>
@@ -120,9 +146,15 @@ export function Room({ onLeave }: { onLeave: () => void }) {
             {match.error.message} <span className="muted">({match.error.code})</span>
           </p>
         )}
-        {waiting && (
-          <p className="banner">Waiting for your opponent to join. Send them the code.</p>
-        )}
+        {bot.error && <p className="error banner">{bot.error}</p>}
+        {waiting &&
+          (bot.active ? (
+            <p className="banner">
+              {bot.ready ? 'Seating the bot…' : 'Loading the bot’s network…'}
+            </p>
+          ) : (
+            <p className="banner">Waiting for your opponent to join. Send them the code.</p>
+          ))}
         {loadError && <p className="error banner">{loadError}</p>}
         {Board ? (
           <Board
@@ -137,6 +169,57 @@ export function Room({ onLeave }: { onLeave: () => void }) {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * Who you are playing, and what it is doing right now.
+ *
+ * Sits where the match code sits in a game between people, because it answers the same question and
+ * the code answers nothing here — there is nobody to send it to. What it does show is provenance:
+ * this opponent is a specific trained generation with measured results, and `bot.json` is where
+ * those numbers come from rather than a sentence somebody wrote in a component.
+ */
+function BotPanel({ bot }: { bot: BotStatus }) {
+  const [manifest, setManifest] = useState<BotManifest | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`${BOT_BASE}/bot.json`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: BotManifest | null) => {
+        if (live) setManifest(body);
+      })
+      .catch(() => {
+        // Provenance is a nicety; the bot plays perfectly well without a paragraph about itself.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const beatsHeuristic = manifest?.measured?.baseline?.heuristic;
+  return (
+    <section className="panel compact bot-panel">
+      <h3>Playing the bot</h3>
+      <p className="bot-line">
+        <strong>{bot.level?.label ?? 'Bot'}</strong>
+        <span className="muted"> · {bot.level?.iterations.toLocaleString()} simulations a move</span>
+      </p>
+      <p className={`bot-status ${bot.thinking ? 'on' : ''}`}>
+        {bot.error ? 'Stopped' : bot.thinking ? 'Thinking…' : bot.ready ? 'Waiting for your move' : 'Loading…'}
+      </p>
+      {manifest && (
+        <p className="muted small">
+          Generation {manifest.generation} of the self-play loop
+          {beatsHeuristic === undefined
+            ? '.'
+            : `, which beat the hand-written search ${Math.round(beatsHeuristic * 100)}% of the time.`}{' '}
+          It runs in this browser and sees only what you would see from its seat.
+        </p>
+      )}
+      <p className="muted small">You move first — the bot takes the second seat.</p>
+    </section>
   );
 }
 

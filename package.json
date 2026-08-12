@@ -11,14 +11,16 @@
     "packages/engine",
     "packages/games/*",
     "packages/client-sdk",
+    "packages/net",
     "packages/bot-ismcts",
+    "packages/bot-splendor-duel",
     "apps/server",
     "apps/web",
     "tools/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc -b packages/engine packages/protocol packages/client-sdk packages/games/tic-tac-toe packages/games/splendor-duel packages/bot-ismcts apps/server && tsc -p packages/games/splendor-duel/tsconfig.ui.json && tsc -p packages/games/tic-tac-toe/tsconfig.ui.json",
+    "typecheck": "tsc -b packages/engine packages/protocol packages/client-sdk packages/net packages/games/tic-tac-toe packages/games/splendor-duel packages/bot-ismcts packages/bot-splendor-duel apps/server && tsc -p packages/games/splendor-duel/tsconfig.ui.json && tsc -p packages/games/tic-tac-toe/tsconfig.ui.json && tsc -p apps/web/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "node scripts/dev.mjs",

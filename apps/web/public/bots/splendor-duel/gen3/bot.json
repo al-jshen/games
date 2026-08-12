@@ -1,0 +1,52 @@
+{
+  "id": "gen3",
+  "game": "splendor-duel",
+  "generation": 3,
+  "published": "2026-08-12",
+  "source": "/mnt/ceph/users/jshen/games/loop",
+  "value": {
+    "dir": "value",
+    "architecture": "tiny",
+    "parameters": 23073,
+    "bytes": 92292,
+    "heldOut": {
+      "mse": 0.7641885876655579,
+      "accuracy": 0.6934267250617395,
+      "corr": 0.4857682227642021,
+      "epoch": 122
+    },
+    "baselines": {
+      "heuristic": 0.8419480919837952,
+      "search_q": 0.8041185736656189
+    }
+  },
+  "policy": {
+    "dir": "policy",
+    "architecture": "wide",
+    "parameters": 753390,
+    "bytes": 3013560,
+    "heldOut": {
+      "ce": 2.6407280374137363,
+      "raw": 2.721796189675369,
+      "top1": 0.4412984092008537,
+      "top5": 0.8057846307087689,
+      "mass": 0.23444278562924178,
+      "excess": 0.3207326341239414,
+      "at_one": 2.6402016550882097
+    },
+    "baselines": {
+      "uniform_over_visited": 2.9097101259145437,
+      "target_entropy": 2.319995403289795
+    },
+    "temperature": 0.9313761843272156
+  },
+  "measured": {
+    "accepted": true,
+    "gate": 0.8733333333333333,
+    "baseline": {
+      "random": 1,
+      "heuristic": 0.9333333333333333
+    },
+    "games": 40
+  }
+}

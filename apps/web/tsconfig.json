@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["react", "vite/client"],
+    // `@games/splendor-duel/ui` is a source entry point on purpose -- it imports CSS, so it cannot be
+    // pre-built -- and its own imports name `.tsx` files.
+    "allowImportingTsExtensions": true,
+    // Vite resolves workspace packages to source (see `vite.config.ts`); tsc reaches them through
+    // `node_modules` and their built `dist`. Both are the same code, and `npm run typecheck` builds
+    // the packages first, so the two agree.
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

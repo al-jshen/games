@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../engine" },
+    { "path": "../bot-ismcts" },
+    { "path": "../net" },
+    { "path": "../games/splendor-duel" }
+  ]
+}
