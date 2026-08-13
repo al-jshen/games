@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn the crank: self-play, train, gate on an arena, promote or reject. Repeat.
+"""Turn the crank: self-play, train, measure in an arena, promote. Repeat.
 
     python3 tools/selfplay/loop.py tools/selfplay/loop.yaml
 
@@ -18,10 +18,27 @@ improves, and it breaks silently, at hour six.
 after each step. Re-running the same command after a kill picks up at the first incomplete step
 rather than regenerating 25,000 games.
 
-*A generation is promoted only if it wins.* The candidate plays the incumbent and has to clear a
-threshold, not merely tie. AlphaGo Zero gated at 55% and AlphaZero did not bother, having 44 million
-games for mistakes to wash out in; a generation here is hours, so a silent regression would poison
-everything after it. Rejection is a normal outcome, and the rejected model stays on disk.
+*A generation is promoted unless it is measurably worse.* The candidate plays the incumbent, but the
+arena reports rather than decides: promotion is refused only when the whole 95% interval sits below
+even, which at 300 games means roughly 35 elo of genuine regression.
+
+This used to be a 55% threshold, AlphaGo Zero's number, and it was right while every generation was
+an independent refit from random weights -- such a fit can land anywhere, so a candidate had to prove
+itself before being trusted to generate the next round of data. Warm starting removed that premise:
+a candidate now begins from the incumbent's weights and the outcome it is most likely to have is
+"much the same". AlphaZero dropped the gate for exactly this reason and always used the latest net.
+
+Eight generations here say the same thing, and say it as a failure. Every candidate from gen-4 on
+landed inside the arena's own +-40 elo resolution, so the threshold was deciding on coin flips: gen-5
+was promoted on 0.54 [-12, +67] and became the incumbent that gen-6 and gen-7 then failed to beat.
+Worse, rejection fed back into training. The incumbent does not change, so the next generation warm
+starts from the same weights, finds nothing that beats them, and ships a byte-identical copy --
+gen-4's value head is gen-3's to the byte, and gen-6's is gen-5's. A rejection also leaves the
+self-play inputs unchanged, so gen-7 replayed gen-6's 50,000 games exactly. The gate was not
+filtering noise out of the loop; it was closing a loop that manufactured it.
+
+What survives is the direction. A candidate that is *significantly* worse is still refused, which is
+the regression this exists to stop, and a refused model stays on disk.
 
 *Absolute strength is tracked separately from relative.* Gating compares each generation with the one
 before it, which says nothing about whether the sequence as a whole is going anywhere -- a loop can
@@ -529,6 +546,9 @@ class Loop:
                    "--shard-id", SHARD,
                    "--iterations", str(cfg["iterations"]),
                    "--out", named(out),
+                   # So each generation draws deals no other generation has played. Without it the
+                   # index alone seeds everything, and the index restarts at zero every round.
+                   "--seed-prefix", f"gen{generation}",
                    "--temperature", str(cfg.get("temperature", 0)),
                    "--temperature-moves", str(cfg.get("temperature_moves", 15))]
         command += self.workers("selfplay", cfg)
@@ -711,6 +731,12 @@ class Loop:
         return self.report(path)
 
     def gate(self, generation: int, candidate: dict) -> dict | None:
+        """Candidate against incumbent. A measurement first and a veto second.
+
+        The score it returns is the loop's only relative number and is recorded whatever it says.
+        The caller promotes on it unless the interval rules out a tie, so this runs every generation
+        even when the verdict is a foregone conclusion -- the series is the point.
+        """
         cfg = self.config["arena"]
         if not self.state["best"]["value"]:
             print("  no incumbent yet — generation 0 is promoted unopposed")
@@ -825,11 +851,11 @@ class Loop:
             return out
 
         print(f"\n{RULE}\n  progress so far\n{RULE}")
-        print("  gen   gate score   verdict  "
+        print("  gen   arena       verdict  "
               + "".join(f"{('vs ' + n):>14}" for n in names) + "      model")
         for h in rows:
             gate = f"{h['score']:.1%}" if h.get("score") is not None else "unopposed"
-            mark = "accepted" if h["accepted"] else "rejected"
+            mark = "promoted" if h["accepted"] else "refused"
             print(f"  {h['generation']:>3}   {gate:>10}   {mark:<9}{cells(h)}      "
                   f"{Path(h['candidate']['value']).name}")
         print(flush=True)
@@ -858,23 +884,29 @@ class Loop:
                            f"{', '.join(datasets)}")
             candidate = self.train_both(generation, datasets)
 
-            threshold = float(self.config["arena"]["threshold"])
-            step(3, steps, f"gate — candidate vs incumbent, {self.config['arena']['games']} games, "
-                           f"promote at {threshold:.0%}")
+            step(3, steps, f"arena — candidate vs incumbent, {self.config['arena']['games']} games, "
+                           f"promote unless measurably worse")
             report = self.gate(generation, candidate)
             if report is None:
                 accepted, score = True, None
             else:
                 score = report["score"]
-                accepted = score >= threshold
+                low, high = report["ci"]
+                # The interval decides, not the point estimate. `high < 0.5` is the only way to be
+                # refused: the candidate has to be worse than even across the whole interval, so a
+                # tie, a small loss and a loss the arena cannot resolve all promote. Reading `score`
+                # against a threshold instead is what let 0.49 and 0.54 -- statistically the same
+                # measurement -- reach opposite verdicts.
+                accepted = high >= 0.5
                 tally = f"{report['winsA']}-{report['winsB']}"
                 if report["draws"]:
                     tally += f"-{report['draws']}"
-                low, high = report["ci"]
                 print(f"\n  {tally}   score {score:.1%}   95% CI [{low:.1%}, {high:.1%}]   "
                       f"elo {report['elo']:+.0f}")
-                print(f"  → {'ACCEPTED' if accepted else 'REJECTED'} "
-                      f"({score:.1%} {'≥' if accepted else '<'} {threshold:.0%} threshold)")
+                print(f"  → {'PROMOTED' if accepted else 'REFUSED'} "
+                      + (f"(the interval reaches even; {score:.1%} is not measurably worse)"
+                         if accepted else
+                         f"(regression: the whole interval is below even, {high:.1%} < 50%)"))
 
             if accepted:
                 self.state["best"] = candidate

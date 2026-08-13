@@ -52,6 +52,24 @@ const OUT = flag('out', '.data/gen0');
  */
 const NUM_SHARDS = Number(flag('num-shards', '1'));
 const SHARD_ID = Number(flag('shard-id', '0'));
+/*
+ * What distinguishes one generation's games from another's.
+ *
+ * The deal and both searches are seeded from the game index, and the index runs 0..GAMES-1 in every
+ * generation, so without this every generation replays the same deals with a different network at
+ * the leaf. Eight generations of the loop meant one set of 50,000 deals played eight times rather
+ * than 400,000 deals played once.
+ *
+ * That is mostly a waste of coverage, and once it was a waste of a whole generation: gen-7 followed
+ * a rejected gen-6, so the incumbent net was unchanged, and with the seeds unchanged too its 50,000
+ * games came out byte-identical to gen-6's. Same inputs, same outputs. The prefix is the input that
+ * makes a generation a different question rather than the same one asked again.
+ *
+ * It is a string rather than a number so it stays reproducible and readable: `gen5-7` is game 7 of
+ * generation 5, and `seed_for(row)` still hands you something you can paste into the replay viewer.
+ * The default reproduces the original scheme exactly, so datasets made before this still resolve.
+ */
+const SEED_PREFIX = flag('seed-prefix', 'gen');
 
 if (!Number.isInteger(NUM_SHARDS) || NUM_SHARDS < 1) {
   throw new Error(`--num-shards must be a positive integer, got ${NUM_SHARDS}`);
@@ -135,7 +153,7 @@ const TEMPERATURE_MOVES = Number(flag('temperature-moves', '15'));
 const explore = TEMPERATURE > 0 ? { temperature: TEMPERATURE, moves: TEMPERATURE_MOVES } : null;
 
 const config = { ...DEFAULT_CONFIG, iterations: ITERATIONS, ...(NET ? { leaf: 'evaluate' } : {}), ...SEARCH };
-const seeds = Array.from({ length: MINE }, (_, i) => `gen-${FIRST + i}`);
+const seeds = Array.from({ length: MINE }, (_, i) => `${SEED_PREFIX}-${FIRST + i}`);
 
 /*
  * Two indices, and the distinction is the whole of the sharding.
@@ -144,6 +162,10 @@ const seeds = Array.from({ length: MINE }, (_, i) => `gen-${FIRST + i}`);
  * played* hangs off it -- the deal, both searches, which seat moves first -- so game 7 is the same
  * game whether it was produced by one process or by ten, and the union of the shards is exactly the
  * run that one machine would have produced.
+ *
+ * `SEED_PREFIX` qualifies it across generations, and qualifies all three seeds rather than just the
+ * deal: two generations handed different deals but identical determinization streams would still be
+ * drawing their hidden information in lockstep.
  *
  * `game` is the position within this shard's own output, and it is what `gameIndex` stamps into
  * `meta`. That column is an index into this dataset's `seeds` array, which holds only the seeds
@@ -158,8 +180,8 @@ const jobs = seeds.map((seed, game) => {
     record: true,
     // Both seats searched, so every position is a training row rather than half of them.
     aFirst: index % 2 === 0,
-    a: { kind: 'ismcts', config: { ...config, seed: `a${index}` }, net: NET, policy: POLICY, explore },
-    b: { kind: 'ismcts', config: { ...config, seed: `b${index}` }, net: NET, policy: POLICY, explore },
+    a: { kind: 'ismcts', config: { ...config, seed: `a${SEED_PREFIX}${index}` }, net: NET, policy: POLICY, explore },
+    b: { kind: 'ismcts', config: { ...config, seed: `b${SEED_PREFIX}${index}` }, net: NET, policy: POLICY, explore },
   };
 });
 

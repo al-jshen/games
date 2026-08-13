@@ -3,7 +3,7 @@
 #     python3 tools/selfplay/loop.py tools/selfplay/loop.yaml
 #
 # Every generation: play games with the reigning network, train both heads on a window of recent
-# generations, make the candidate play the incumbent, promote it only if it wins by the threshold,
+# generations, make the candidate play the incumbent, promote it unless it is measurably worse,
 # then play a fixed opponent so absolute progress is visible and not just relative.
 #
 # Numbers below are for a 12-core box with one GPU. The measurements they come from are in the
@@ -103,10 +103,33 @@ selfplay:
   # head has actually been measured to want. There is no free answer.
   iterations: 1000
   workers: null            # null = one per core
-  # Sampling the opening in proportion to visit counts. Off, because at 300 iterations over ~76 legal
-  # moves the visit distribution is uniform to within a rounding error and sampling from it is not
-  # exploration, it is random opening play. Worth switching on at higher iteration counts.
-  temperature: 0
+  # Sampling the opening from the visit counts instead of taking the favourite. On, finally: this was
+  # 0 because "at 300 iterations over ~76 legal moves the visit distribution is uniform to within a
+  # rounding error, and sampling from it is not exploration, it is random opening play -- worth
+  # switching on at higher iteration counts". Both conditions it named have since been met. The
+  # search runs at 1000 iterations, and `puct` concentrates the budget instead of spreading it over
+  # every legal move, so there is now a distribution worth sampling from.
+  #
+  # It matters because greedy play is how the loop narrows. A deal played greedily produces exactly
+  # one line -- the one the current network already prefers -- so each generation learns from the
+  # slice of the game the last one liked, and the policy has no way to discover the alternatives it
+  # would need in order to move onto them. That is AlphaZero's improvement operator, and until now
+  # this loop was missing it: with the deals fixed across generations too, self-play had almost no
+  # diversity mechanism at all.
+  #
+  # 0.5, not AlphaZero's 1.0, and the run's own numbers are why. `visits ** (1/T)`, so T below 1
+  # sharpens: 0.5 squares the counts. At 1232 iterations a root position puts 28.2% on the favourite
+  # with an effective support of 27.3 moves, and sampling *that* at T=1 is drawing near-uniformly
+  # from twenty-odd moves -- which is the "random opening play" the old note rejected, and it would
+  # label a lot of positions that follow a blunder with the outcome that followed it. Squaring
+  # concentrates on the handful the search actually liked while leaving the line open.
+  #
+  # The policy target is untouched: `pi` stays the visit distribution the search concluded, and this
+  # changes only which move is played out of it. See pickAction in game.mjs.
+  #
+  # 15 plies of a game that averages 85 (423,153 rows over 5,000 games), so the first ~18% -- close
+  # to AlphaZero's 30 of ~200 in Go. Both seats are recorded, so these are plies, not moves each.
+  temperature: 0.5
   temperature_moves: 15
   # Consult the policy head. Measured at 1000 iterations with gen-1's heads over 1000 games:
   # +27 elo [+6, +49] for priors at the root. Modest, and it clears zero -- where the earlier
@@ -174,32 +197,19 @@ training:
     lr: 0.001
     arch: [wide]           # only `wide` beat a uniform prior; capacity had not saturated
 
-# The gate. Candidate against incumbent, promote only on a win.
+# Candidate against incumbent. A measurement that also carries a veto, not a gate.
+#
+# There is no threshold to set. Promotion is refused only when the 95% interval lies entirely below
+# even -- roughly 35 elo of genuine regression at 300 games -- and every other outcome promotes.
+# See the module docstring in loop.py for the eight generations that argued this down from 0.55.
+#
+# The number to raise here is `games`, not any threshold. 300 resolves about +-40 elo and every
+# candidate since gen-4 has landed inside that, so the series below is mostly measuring the arena.
+# It costs 155s against 34 minutes of self-play; 1000 games would take ~9 minutes and roughly halve
+# the interval. Worth doing once the loop is producing gains again and you want to see them.
 arena:
   games: 300               # 120 games resolves about +-62 elo; 300 gets you to roughly +-40
   iterations: 1000
-  # 0.50: promote anything that is not measurably worse, rather than only what is measurably better.
-  #
-  # 0.55 was AlphaGo Zero's number and it was the right one while every generation was an
-  # independent refit from random weights -- such a fit can land anywhere, so a candidate had to
-  # prove itself before being allowed to generate the next round of data. Warm starting removes that
-  # premise: a candidate now begins from the incumbent's weights, so the outcome it is most likely
-  # to have is "much the same", and much the same is exactly what 0.55 throws away.
-  #
-  # Generation 2 scored 0.49 and was rejected. It would fail this threshold too -- 147-153 is under
-  # either -- so the point is not that number but the regime it reveals: candidates land near 50%,
-  # and at 300 games the interval is about +-40 elo, so clearing 0.55 reliably means being genuinely
-  # 35+ elo better. Demanding that every round is how a loop stalls rather than how it stays honest,
-  # and it means a generation that improved slightly is indistinguishable from one that did nothing.
-  #
-  # The gate stays because the direction still matters: a candidate that is genuinely worse scores
-  # below 0.50 and is still refused, which is the regression this exists to stop. What changes is
-  # that ties now go to the newer model, which has seen more data.
-  #
-  # One consequence worth knowing: against an identical model the score is a coin flip, so roughly
-  # half of no-change generations will promote. That is harmless -- promoting a model of the same
-  # strength costs nothing -- but "accepted" in the history stops meaning "improved".
-  threshold: 0.50
   workers: null
   use_policy: true         # priors are only read under `selection: puct`
   search:
