@@ -11,10 +11,22 @@ WORKDIR /app
 ENV npm_config_audit=false npm_config_fund=false
 
 # Copy manifests first so `npm ci` is cached independently of source changes.
+#
+# **Every workspace the build touches must be listed here.** `npm ci` links `@games/*` by finding a
+# `package.json` at each workspace path, and a workspace whose manifest has not been copied yet is
+# simply not linked -- no warning, because npm has no way to tell a missing workspace from one you
+# meant to leave out. The import then fails to resolve at typecheck time, and TypeScript reports it
+# as a cascade of implicit-`any` parameters in whichever file used a type from it, which points
+# nowhere near the actual problem. That is exactly how `@games/net`, `@games/bot-ismcts` and
+# `@games/bot-splendor-duel` announced themselves: three TS7006 errors in `bot-splendor-duel` and no
+# mention of Docker anywhere.
 COPY package.json package-lock.json ./
 COPY packages/engine/package.json packages/engine/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/client-sdk/package.json packages/client-sdk/
+COPY packages/net/package.json packages/net/
+COPY packages/bot-ismcts/package.json packages/bot-ismcts/
+COPY packages/bot-splendor-duel/package.json packages/bot-splendor-duel/
 COPY packages/games/splendor-duel/package.json packages/games/splendor-duel/
 COPY packages/games/tic-tac-toe/package.json packages/games/tic-tac-toe/
 COPY apps/server/package.json apps/server/
