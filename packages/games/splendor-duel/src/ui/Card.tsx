@@ -138,7 +138,7 @@ function formatCost(cost: Partial<Record<PayColor, number>>): string {
 export interface CardViewProps {
   cardId: string | null;
   size?: CardSize;
-  /** Cost after the viewer's bonuses, when known; falls back to the printed cost. */
+  /** Cost after the viewer's bonuses, when known. Feeds the tooltip; the face keeps the printed cost. */
   effectiveCost?: Partial<Record<PayColor, number>> | undefined;
   /** Colour a wild card has been assigned to. */
   assignedColor?: GemColor | null;
@@ -182,21 +182,37 @@ export function CardView({
     );
   }
 
-  const cost = effectiveCost ?? def.cost;
-  const costEntries = Object.entries(cost).filter(([, n]) => (n ?? 0) > 0) as [PayColor, number][];
   /*
-   * The face shows what the card costs *you*, which is the number you act on. The printed cost is
-   * what makes that number meaningful -- "2 blue" tells you nothing about whether your tableau is
-   * working -- so the tooltip carries both whenever a discount has actually been applied.
+   * The face shows the printed cost -- the number actually on the physical card. It is the one
+   * thing about a card that does not move: it means the same to both players, it is what the card
+   * is called when two people argue about who should take it, and it stays put while a tableau
+   * grows underneath it. What the card costs *you* is a moving target that changes every time you
+   * buy something, so it lives in the tooltip, which is read deliberately rather than glanced at.
+   *
+   * Every size does this, the buy panel's `detail` card included: that panel already lists the
+   * exact tokens you are about to hand over immediately beside the card, so a discounted number on
+   * the face would be a third copy of the same figure sitting two inches from the other two.
    */
-  const discounted = PAY_COLORS.some((c) => (cost[c] ?? 0) !== (def.cost[c] ?? 0));
-  const costLine = costEntries.length
-    ? `cost ${formatCost(cost)}`
-    : discounted
-      ? 'free with your bonuses'
-      : 'free';
-  const costDescription = discounted ? `${costLine}; printed cost ${formatCost(def.cost)}` : costLine;
+  const costEntries = Object.entries(def.cost).filter(([, n]) => (n ?? 0) > 0) as [PayColor, number][];
+  const yourCost = effectiveCost ?? def.cost;
+  const discounted = PAY_COLORS.some((c) => (yourCost[c] ?? 0) !== (def.cost[c] ?? 0));
+  /*
+   * "free" now means printed free, and nothing else. The old face said it for both a free card and
+   * one your bonuses had reduced to nothing, which are very different things to a player deciding
+   * what to take; a reduced card keeps its printed gems, wearing the highlight below, and only the
+   * tooltip says you pay nothing. The branch is unreachable with the shipped deck -- every jewel
+   * card has a printed cost and royals render none at all -- so it is a guard, not a case.
+   */
+  const printedLine = costEntries.length > 0 ? `cost ${formatCost(def.cost)}` : 'free';
+  const costDescription = discounted
+    ? `${printedLine}; costs you ${formatCost(yourCost)} after your bonuses`
+    : printedLine;
   const bonusColor = def.wild ? assignedColor ?? null : def.bonusColor;
+
+  // Hoisted out of the cost row below because the discount highlight has to line up with it exactly.
+  const costPitch = Math.min(30, 98 / Math.max(costEntries.length, 1));
+  const costGemSize = costPitch * 0.94;
+  const costStart = 52 - ((costEntries.length - 1) * costPitch) / 2;
 
   const classes = ['card', `card--${size}`];
   if (selected) classes.push('card-selected');
@@ -329,15 +345,34 @@ export function CardView({
       {/* Cost along the bottom, sized to however many colours it asks for (up to four). */}
       {costEntries.length > 0 && (
         <g>
-          {(() => {
-            const n = costEntries.length;
-            const pitch = Math.min(30, 98 / n);
-            const size = pitch * 0.94;
-            const start = 52 - ((n - 1) * pitch) / 2;
-            return costEntries.map(([color, amount], i) => (
-              <Gem key={color} color={color} size={size} label={String(amount)} x={start + i * pitch} y={130} />
-            ));
-          })()}
+          {/*
+            A discount is worth seeing without hovering, so the row gets a capsule behind it when
+            your bonuses have moved the price. Green was the obvious colour and is wrong: green is
+            already the affordable outline, and a card can be discounted and still out of reach.
+            Cream only says "there is something to read here", which is all this has to do.
+          */}
+          {discounted && (
+            <rect
+              x={costStart - costGemSize / 2 - 2}
+              y={130 - costGemSize / 2 - 2}
+              width={(costEntries.length - 1) * costPitch + costGemSize + 4}
+              height={costGemSize + 4}
+              rx={6}
+              fill="rgba(246,235,202,0.13)"
+              stroke="rgba(246,235,202,0.5)"
+              strokeWidth={1.1}
+            />
+          )}
+          {costEntries.map(([color, amount], i) => (
+            <Gem
+              key={color}
+              color={color}
+              size={costGemSize}
+              label={String(amount)}
+              x={costStart + i * costPitch}
+              y={130}
+            />
+          ))}
         </g>
       )}
       {def.kind !== 'royal' && costEntries.length === 0 && (

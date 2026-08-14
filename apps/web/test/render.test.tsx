@@ -218,23 +218,29 @@ describe('the move log', () => {
 describe('card tooltips', () => {
   // l1-27 costs 4 white + 1 pearl. Three published datasets get this card wrong, so it doubles as a
   // check that the tooltip is reading real card data.
-  it('shows the printed cost alongside what the card costs you', () => {
+  it('names the printed cost and says what it costs you', () => {
     const discounted = renderToStaticMarkup(<CardView cardId="l1-27" effectiveCost={{ white: 1, pearl: 1 }} />);
-    expect(discounted).toContain('cost 1 white, 1 pearl');
-    // Without this, "1 white" tells you nothing about whether your tableau is doing any work.
-    expect(discounted).toContain('printed cost 4 white, 1 pearl');
+    expect(discounted).toContain('cost 4 white, 1 pearl');
+    expect(discounted).toContain('costs you 1 white, 1 pearl after your bonuses');
+    // The face carries no second number, so the discount has to be visible some other way: the
+    // highlight capsule behind the cost row is the only rect with that cream stroke.
+    expect(discounted).toContain('rgba(246,235,202,0.5)');
   });
 
   it('does not claim a discount where there is none', () => {
     const plain = renderToStaticMarkup(<CardView cardId="l1-27" />);
     expect(plain).toContain('cost 4 white, 1 pearl');
-    expect(plain).not.toContain('printed cost');
+    expect(plain).not.toContain('costs you');
+    expect(plain).not.toContain('rgba(246,235,202,0.5)');
   });
 
   it('distinguishes a card that is free from one your bonuses have made free', () => {
     const earned = renderToStaticMarkup(<CardView cardId="l1-27" effectiveCost={{}} />);
-    expect(earned).toContain('free with your bonuses');
-    expect(earned).toContain('printed cost 4 white, 1 pearl');
+    // A card reduced to nothing still wears its printed 4 white and 1 pearl, highlighted; only a
+    // card printed free says "free" on its face, and no jewel card in the deck is.
+    expect(earned).toContain('cost 4 white, 1 pearl');
+    expect(earned).toContain('costs you nothing after your bonuses');
+    expect(earned).not.toContain('>free<');
   });
 });
 
