@@ -683,11 +683,16 @@ class Loop:
         return {head: named(out) for head, out in wanted.items()}
 
     def play_task(self, name: str, generation: int, a: dict, b: dict,
-                  cfg: dict) -> tuple[Path, Task | None]:
+                  cfg: dict, games: int | None = None) -> tuple[Path, Task | None]:
         """Where an arena's report goes, and the task that would produce it.
 
         `None` for the task when the report is already there, which is how a resumed run skips an
         arena it has already played. `a` and `b` are `{spec, net, policy}`.
+
+        `games` overrides the step's own count, because one number cannot serve every opponent. An
+        anchor the loop beats 100-0 is settled in twenty games and an anchor it is fifty elo above
+        needs three hundred, and spending the larger number on both is spending it on the one that
+        stopped saying anything generations ago.
         """
         report_path = self.run_dir / "reports" / f"gen{generation}-{name}.json"
         if report_path.exists():
@@ -697,7 +702,7 @@ class Loop:
 
         command = [NODE, "tools/selfplay/arena.mjs",
                    "--a", a["spec"], "--b", b["spec"],
-                   "--pairs", str(max(1, int(cfg["games"]) // 2)),
+                   "--pairs", str(max(1, int(games if games is not None else cfg["games"]) // 2)),
                    "--iterations", str(cfg["iterations"]),
                    "--label-a", a["label"], "--label-b", b["label"],
                    "--report", named(report_path)]
@@ -753,7 +758,17 @@ class Loop:
         )
 
     def anchors(self) -> list[dict]:
-        """The fixed opponents, as `{name, spec, net, report}`.
+        """The fixed opponents, as `{name, spec, net, policy, games, report}`.
+
+        **A frozen generation of this loop belongs in here, and is the only anchor that keeps
+        resolving.** `random` was pinned at 100% before the first network existed and `heuristic`
+        reached 60-0 by generation 11, so both have stopped being measurements; meanwhile the gate
+        compares neighbours a dozen elo apart with a 300-game interval of about +-40, and reports
+        "no result" every time. An ancestor is the one opponent whose gap *accumulates*: eleven
+        generations of roughly twelve elo each is a difference a few hundred games can actually see.
+        Which needs `opponent_policy` as well as `opponent_net` -- a network anchor missing its
+        policy head is not the agent that was frozen, it is that agent crippled to UCB1, and it
+        would flatter every generation measured against it.
 
         Several rather than one, for two reasons. They saturate at different times -- `random` is
         pinned at 100% before the first generation is trained and measures nothing thereafter, while
@@ -772,14 +787,18 @@ class Loop:
         entries = cfg.get("opponents")
         if not entries:
             return [{"name": cfg.get("opponent", "random"), "spec": cfg.get("opponent", "random"),
-                     "net": cfg.get("opponent_net"), "report": "baseline"}]
+                     "net": cfg.get("opponent_net"), "policy": None, "games": None,
+                     "report": "baseline"}]
         out = []
         for entry in entries:
             if isinstance(entry, str):
                 entry = {"name": entry, "spec": entry}
             name = entry["name"]
             out.append({"name": name, "spec": entry.get("spec", name),
-                        "net": entry.get("opponent_net"), "report": f"baseline-{name}"})
+                        "net": entry.get("opponent_net"),
+                        "policy": entry.get("opponent_policy"),
+                        "games": entry.get("games"),
+                        "report": f"baseline-{name}"})
         return out
 
     def baseline(self, generation: int) -> dict:
@@ -793,6 +812,10 @@ class Loop:
         its own spec rather than leaving it to `baseline.iterations`, which the loop's operating
         point may drag along with it -- the spec wins over the flag in `arena.mjs`, so an anchor
         written that way survives a change of mind about the search.
+
+        The same applies with more force to a frozen *network* anchor: point it at a copy under
+        `anchors/`, never at `models/`, which is a directory this loop writes to and something will
+        eventually clean up. An anchor you can accidentally move is not one.
 
         Submitted together, like the two training heads: the anchors share no state, read nothing
         of each other's, and the step costs as long as the slowest rather than their sum.
@@ -811,8 +834,12 @@ class Loop:
                 {"spec": json.dumps(cfg.get("search", {})), "label": f"gen{generation} best",
                  "net": self.state["best"]["value"],
                  "policy": self.state["best"]["policy"] if cfg.get("use_policy") else None},
-                {"spec": anchor["spec"], "label": anchor["name"], "net": anchor.get("net")},
+                # The anchor's own policy, unconditionally -- not gated on `use_policy`, which is a
+                # statement about how *we* search. A frozen opponent searches the way it was frozen.
+                {"spec": anchor["spec"], "label": anchor["name"], "net": anchor.get("net"),
+                 "policy": anchor.get("policy")},
                 cfg,
+                games=anchor.get("games"),
             )
             paths[anchor["name"]] = path
             if task is not None:

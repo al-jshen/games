@@ -28,7 +28,24 @@ const PACKAGES = [
   'packages/games/splendor-duel',
 ];
 
-/** Newest mtime under a directory, or 0 if it does not exist. */
+/**
+ * Only the sources that can actually change `dist`.
+ *
+ * Everything else is noise, and one kind of noise makes this check unclearable rather than merely
+ * noisy. `src/ui/**` is `exclude`d by every game package's tsconfig -- it imports CSS and JSX and is
+ * built by vite, never emitted here -- so tsc does not read it, has nothing to do when it changes,
+ * and does not rewrite `.tsbuildinfo`. Editing a stylesheet therefore left `src` permanently newer
+ * than the build, and `npm run build` could not clear it: exactly the "a check nobody can clear is
+ * worse than no check" failure this file's own comment warns about, arrived at from a direction it
+ * did not anticipate.
+ *
+ * The same reasoning covers non-TypeScript files generally -- a `.md` or a `.json` fixture beside
+ * the source is not something the tools run.
+ */
+const BUILT = /\.(m|c)?tsx?$/;
+const IGNORED_DIRS = new Set(['ui', 'dist', 'node_modules']);
+
+/** Newest mtime among the buildable sources under a directory, or 0 if it does not exist. */
 function newest(dir) {
   let latest = 0;
   let entries;
@@ -39,8 +56,12 @@ function newest(dir) {
   }
   for (const entry of entries) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) latest = Math.max(latest, newest(path));
-    else latest = Math.max(latest, statSync(path).mtimeMs);
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRS.has(entry.name)) continue;
+      latest = Math.max(latest, newest(path));
+    } else if (BUILT.test(entry.name)) {
+      latest = Math.max(latest, statSync(path).mtimeMs);
+    }
   }
   return latest;
 }
@@ -72,8 +93,26 @@ function lastVerified(pkg) {
       }
     }
   }
-  // No build info at all: fall back to the output, which is the best available answer.
-  return latest || newest(join(pkg, 'dist'));
+  // No build info at all: fall back to the output, which is the best available answer. Walked
+  // unfiltered -- `newest` deliberately only counts sources tsc compiles, and `dist` holds what it
+  // emitted, which is a different set of extensions.
+  return latest || newestAny(join(pkg, 'dist'));
+}
+
+/** Every file, for the one caller that is looking at build output rather than at sources. */
+function newestAny(dir) {
+  let latest = 0;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    latest = Math.max(latest, entry.isDirectory() ? newestAny(path) : statSync(path).mtimeMs);
+  }
+  return latest;
 }
 
 export function requireFreshBuild() {

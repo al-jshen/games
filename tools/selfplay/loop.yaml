@@ -244,7 +244,36 @@ baseline:
   # later change to the loop's operating point. Do not edit these numbers once a run has started;
   # the series stops meaning anything if the opponent moves.
   opponents:
+    # Both of these have stopped measuring anything. `random` was pinned at 100% before the first
+    # network existed; the heuristic reached 60-0 by generation 11. They stay because they cost
+    # almost nothing and a regression would still show up in them, but they are history, not signal.
     - name: random
       spec: random
+      games: 20
     - name: heuristic
       spec: '{"leaf":"mixed","iterations":1000}'
+      games: 60
+    # A frozen generation of this loop, and the only anchor that still resolves.
+    #
+    # The gate compares neighbours, and neighbours are about twelve elo apart -- gens 5 through 11
+    # scored +28, +14, +12, +7, +14, +21, -12, six of seven positive and every one of them inside a
+    # 300-game interval of roughly +-40. So the loop is improving and the gate cannot see it. Eleven
+    # generations of twelve elo is a gap a few hundred games *can* see, which is what this is: the
+    # same question asked against something that holds still.
+    #
+    # 300 games, not 60, because that is the whole point -- at 60 the interval is about +-90 elo and
+    # would swallow the number being measured. It costs one arena node for ~160s, and the anchors
+    # are submitted together, so the step takes as long as this one rather than the sum of all three.
+    #
+    # `iterations` is inside the spec on purpose: `arena.mjs` lets the spec win over the flag, so
+    # this survives a later change to the loop's operating point. The paths are under `anchors/`,
+    # which is a copy nothing writes to -- pointing at `models/` would be pointing at a directory
+    # this loop rewrites every generation.
+    #
+    # Freeze the next one around generation 16 and *add* it; never retire this one. Two overlapping
+    # series is how you tell a plateau from a measurement that has run out of range.
+    - name: gen5
+      spec: '{"selection":"puct","puctExploration":4,"puctDepth":99,"normaliseValues":true,"iterations":1000}'
+      opponent_net: /mnt/ceph/users/jshen/games/loop/anchors/gen5-value
+      opponent_policy: /mnt/ceph/users/jshen/games/loop/anchors/gen5-policy
+      games: 300
