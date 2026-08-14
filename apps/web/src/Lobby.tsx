@@ -1,14 +1,23 @@
 import { normalizeCode } from '@games/protocol';
 import { CODE_LENGTH } from '@games/protocol';
 import { useEffect, useRef, useState } from 'react';
-import { BOT_GAME, BOT_LEVELS, type BotLevelId } from './bot/bot.js';
+import {
+  BOT_GAME,
+  DEFAULT_ITERATIONS,
+  ITERATION_STEP,
+  MAX_ITERATIONS,
+  MIN_ITERATIONS,
+  clampIterations,
+  describeStrength,
+  estimateMs,
+} from './bot/bot.js';
 import { clearPendingBot, pendingBot, setPendingBot } from './bot/seats.js';
 import { hasBoard } from './games.js';
 import { closeMatch, listResumable, type ResumableMatch } from './resumable.js';
 import { client, useMatch } from './store.js';
 
 const NAME_KEY = 'games:name';
-const BOT_LEVEL_KEY = 'games:botLevel';
+const BOT_SIMS_KEY = 'games:botIterations';
 
 export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
   const match = useMatch();
@@ -50,14 +59,14 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
    * The order matters and cannot be otherwise: the room does not have a code until the server names
    * it, so the intent is parked and `useBot` claims it when the room opens. See `seats.ts`.
    */
-  const [level, setLevel] = useState<BotLevelId>(
-    () => (localStorage.getItem(BOT_LEVEL_KEY) as BotLevelId | null) ?? 'normal',
+  const [iterations, setIterations] = useState<number>(() =>
+    clampIterations(Number(localStorage.getItem(BOT_SIMS_KEY) ?? DEFAULT_ITERATIONS)),
   );
-  const playBot = (chosen: BotLevelId) => {
-    localStorage.setItem(BOT_LEVEL_KEY, chosen);
+  const playBot = (chosen: number) => {
+    localStorage.setItem(BOT_SIMS_KEY, String(chosen));
     // After `create`, which clears any earlier one -- the order matters.
     create(BOT_GAME);
-    setPendingBot({ level: chosen });
+    setPendingBot({ iterations: chosen });
   };
 
   /*
@@ -73,7 +82,7 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
     if (!pending?.autoStart) return;
     autoStarted.current = true;
     clearPendingBot();
-    playBot(pending.level);
+    playBot(pending.iterations);
     // `playBot` re-parks the intent without `autoStart`, which is what `useBot` will claim.
   }, [ready]);
 
@@ -131,7 +140,12 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
                 {hasBoard(game.id) ? 'Create match' : 'No UI yet'}
               </button>
               {game.id === BOT_GAME && hasBoard(game.id) && (
-                <BotStarter level={level} onLevel={setLevel} disabled={!ready} onPlay={playBot} />
+                <BotStarter
+                  iterations={iterations}
+                  onIterations={setIterations}
+                  disabled={!ready}
+                  onPlay={playBot}
+                />
               )}
             </article>
           ))}
@@ -171,41 +185,50 @@ export function Lobby({ deepLinkedCode }: { deepLinkedCode: string | null }) {
  * game and there is exactly one game that has a trained network. A second row here is honest about
  * that; a "Bots" section listing one entry would not be.
  *
- * The level is a `select` and not three buttons because it is a setting rather than three ways to
- * start — and because it is remembered, so the common case is one click on a choice made once.
+ * A slider over simulations per move, rather than three named levels. What is actually being chosen
+ * is a number, and where a player wants to sit on it depends on how strong they are and how long
+ * they will wait for a move — neither of which three labels can guess. The setting is remembered, so
+ * the common case is one click on a choice made once.
+ *
+ * The time estimate is shown because the top of the range is genuinely slow: 5000 simulations is
+ * several seconds a move, and that should be chosen on purpose rather than discovered.
  */
 function BotStarter({
-  level,
-  onLevel,
+  iterations,
+  onIterations,
   disabled,
   onPlay,
 }: {
-  level: BotLevelId;
-  onLevel: (level: BotLevelId) => void;
+  iterations: number;
+  onIterations: (iterations: number) => void;
   disabled: boolean;
-  onPlay: (level: BotLevelId) => void;
+  onPlay: (iterations: number) => void;
 }) {
-  const chosen = BOT_LEVELS.find((l) => l.id === level) ?? BOT_LEVELS[1];
+  const seconds = estimateMs(iterations) / 1000;
   return (
     <div className="bot-start">
       <div className="row">
-        <button type="button" disabled={disabled} onClick={() => onPlay(level)}>
+        <button type="button" disabled={disabled} onClick={() => onPlay(iterations)}>
           Play the bot
         </button>
-        <select
-          className="bot-level"
-          aria-label="Bot difficulty"
-          value={level}
-          onChange={(e) => onLevel(e.target.value as BotLevelId)}
-        >
-          {BOT_LEVELS.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.label}
-            </option>
-          ))}
-        </select>
+        <span className="bot-sims">{iterations.toLocaleString()}</span>
       </div>
-      <p className="muted small">{chosen?.blurb}</p>
+      <input
+        className="bot-slider"
+        type="range"
+        min={MIN_ITERATIONS}
+        max={MAX_ITERATIONS}
+        step={ITERATION_STEP}
+        value={iterations}
+        disabled={disabled}
+        aria-label="Simulations per move"
+        aria-valuetext={`${iterations} simulations a move`}
+        onChange={(e) => onIterations(clampIterations(Number(e.target.value)))}
+      />
+      <p className="muted small">
+        {describeStrength(iterations)} · about {seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(1)}s`} a
+        move
+      </p>
     </div>
   );
 }

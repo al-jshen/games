@@ -14,19 +14,20 @@
  * of level has to survive the gap -- and, for "play again", a full page load.
  */
 
-import type { BotLevelId } from './bot.js';
+import { clampIterations, DEFAULT_ITERATIONS } from './bot.js';
 
 const SEAT_PREFIX = 'bot:';
 const PENDING_KEY = 'bot:pending';
 
 export interface BotSeat {
-  level: BotLevelId;
+  /** Simulations per move. See `MIN_ITERATIONS`. */
+  iterations: number;
   /** Issued by the server when the bot took its seat. Absent until it has. */
   token?: string;
 }
 
 export interface PendingBot {
-  level: BotLevelId;
+  iterations: number;
   /** Set by "play again", which navigates to the lobby and wants it to start a match on arrival. */
   autoStart?: boolean;
   /** When it was parked. See `STALE_MS`. */
@@ -64,9 +65,24 @@ function write(store: Storage, key: string, value: unknown): void {
   }
 }
 
+/**
+ * Named levels, from before the dial was continuous.
+ *
+ * A seat token in storage outlives the release that wrote it, and a match resumed after this change
+ * would otherwise come back with `iterations: undefined` and a bot that never moves. Reading the old
+ * shape costs three lines; discovering it as a stuck game does not.
+ */
+const LEGACY_LEVELS: Record<string, number> = { easy: 100, normal: 300, hard: 1000 };
+
+function withIterations<T extends { iterations?: number; level?: string }>(stored: T | null): (T & { iterations: number }) | null {
+  if (!stored) return null;
+  const legacy = stored.level === undefined ? undefined : LEGACY_LEVELS[stored.level];
+  return { ...stored, iterations: clampIterations(stored.iterations ?? legacy ?? DEFAULT_ITERATIONS) };
+}
+
 /** The bot seated in this match, or null when this is a match between people. */
 export function botSeat(code: string): BotSeat | null {
-  return read<BotSeat>(localStorage, `${SEAT_PREFIX}${code}`);
+  return withIterations(read<BotSeat & { level?: string }>(localStorage, `${SEAT_PREFIX}${code}`));
 }
 
 export function rememberBotSeat(code: string, seat: BotSeat): void {
@@ -82,7 +98,7 @@ export function forgetBotSeat(code: string): void {
 }
 
 export function pendingBot(): PendingBot | null {
-  const pending = read<PendingBot>(sessionStorage, PENDING_KEY);
+  const pending = withIterations(read<PendingBot & { level?: string }>(sessionStorage, PENDING_KEY));
   if (!pending) return null;
   if (typeof pending.at === 'number' && Date.now() - pending.at > STALE_MS) {
     clearPendingBot();
@@ -115,7 +131,7 @@ export function claimPendingBot(code: string): BotSeat | null {
   const pending = pendingBot();
   if (!pending) return null;
   clearPendingBot();
-  const seat: BotSeat = { level: pending.level };
+  const seat: BotSeat = { iterations: pending.iterations };
   rememberBotSeat(code, seat);
   return seat;
 }

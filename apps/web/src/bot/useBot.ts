@@ -7,13 +7,14 @@
 
 import { normalizeCode } from '@games/protocol';
 import { useEffect, useState } from 'react';
-import { BOT_BASE, BOT_GAME, levelById, type BotLevel, type FromBot, type ToBot } from './bot.js';
+import { BOT_BASE, BOT_GAME, type FromBot, type ToBot } from './bot.js';
 import { botSeat, claimPendingBot, pendingBot, rememberBotSeat } from './seats.js';
 
 export interface BotStatus {
   /** A bot is seated in this room. False for a match between people. */
   active: boolean;
-  level: BotLevel | null;
+  /** Simulations per move, or null when no bot is seated. */
+  iterations: number | null;
   /** The checkpoints are loaded and the worker is on the socket. */
   ready: boolean;
   /** Inside a search. The one thing worth showing continuously. */
@@ -21,7 +22,7 @@ export interface BotStatus {
   error: string | null;
 }
 
-const IDLE: BotStatus = { active: false, level: null, ready: false, thinking: false, error: null };
+const IDLE: BotStatus = { active: false, iterations: null, ready: false, thinking: false, error: null };
 
 function socketUrl(): string {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -37,14 +38,13 @@ export function useBot(code: string | null, gameId: string | null): BotStatus {
 
     /*
      * Claiming happens here rather than in the lobby because here is the first moment the code
-     * exists. Creating a match is a round trip: the button knows the level, the server names the
+     * exists. Creating a match is a round trip: the button knows the setting, the server names the
      * room, and the two facts meet at this line.
      */
     const seat = claimPendingBot(room);
     if (!seat) return;
 
-    const level = levelById(seat.level);
-    setStatus({ active: true, level, ready: false, thinking: false, error: null });
+    setStatus({ active: true, iterations: seat.iterations, ready: false, thinking: false, error: null });
 
     const worker = new Worker(new URL('./play.worker.ts', import.meta.url), { type: 'module' });
 
@@ -57,13 +57,13 @@ export function useBot(code: string | null, gameId: string | null): BotStatus {
         case 'token':
           // The one fact worth persisting: without it a reload cannot put the bot back in its seat,
           // and the room would sit full and unplayable for ever.
-          rememberBotSeat(message.code, { level: seat.level, token: message.token });
+          rememberBotSeat(message.code, { iterations: seat.iterations, token: message.token });
           return;
         case 'thinking':
           setStatus((s) => ({ ...s, thinking: message.on }));
           return;
         case 'rematch':
-          rememberBotSeat(normalizeCode(message.code), { level: seat.level, token: message.token });
+          rememberBotSeat(normalizeCode(message.code), { iterations: seat.iterations, token: message.token });
           return;
         case 'error':
           setStatus((s) => ({ ...s, error: message.message, thinking: false }));
@@ -79,9 +79,9 @@ export function useBot(code: string | null, gameId: string | null): BotStatus {
       t: 'start',
       url: socketUrl(),
       code: room,
-      name: `Bot · ${level.label}`,
+      name: `Bot · ${seat.iterations} sims`,
       base: BOT_BASE,
-      level,
+      iterations: seat.iterations,
       token: botSeat(room)?.token ?? null,
       // Fresh every time the worker starts, so reopening a match does not replay the same reasoning
       // move for move. The search is seeded rather than random, which is what makes a bug in it

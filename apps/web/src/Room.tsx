@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BOT_BASE, BOT_GAME, type BotManifest } from './bot/bot.js';
+import { BOT_BASE, BOT_GAME, DEFAULT_ITERATIONS, describeStrength, type BotManifest } from './bot/bot.js';
 import { Coach } from './bot/Coach.js';
 import { setPendingBot } from './bot/seats.js';
 import { isBotMatch, useBot, type BotStatus } from './bot/useBot.js';
@@ -121,7 +121,7 @@ export function Room({ onLeave }: { onLeave: () => void }) {
                 <button
                   type="button"
                   onClick={() => {
-                    setPendingBot({ level: bot.level?.id ?? 'normal', autoStart: true });
+                    setPendingBot({ iterations: bot.iterations ?? DEFAULT_ITERATIONS, autoStart: true });
                     onLeave();
                   }}
                 >
@@ -228,8 +228,10 @@ function BotPanel({ bot }: { bot: BotStatus }) {
     <section className="panel compact bot-panel">
       <h3>Playing the bot</h3>
       <p className="bot-line">
-        <strong>{bot.level?.label ?? 'Bot'}</strong>
-        <span className="muted"> · {bot.level?.iterations.toLocaleString()} simulations a move</span>
+        <strong>{(bot.iterations ?? 0).toLocaleString()} simulations a move</strong>
+        {bot.iterations !== null && (
+          <span className="muted"> · {describeStrength(bot.iterations).split(' — ')[0]}</span>
+        )}
       </p>
       <p className={`bot-status ${bot.thinking ? 'on' : ''}`}>
         {bot.error ? 'Stopped' : bot.thinking ? 'Thinking…' : bot.ready ? 'Waiting for your move' : 'Loading…'}

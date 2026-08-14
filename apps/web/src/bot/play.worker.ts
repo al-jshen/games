@@ -12,7 +12,7 @@
  * The behaviour lives next door because it does not need a browser and is worth testing without one.
  */
 
-import type { FromBot, ToBot } from './bot.js';
+import { exploreFor, minThinkMsFor, type FromBot, type ToBot } from './bot.js';
 import { loadEngine } from './engine.js';
 import { startBot, type RunningBot } from './player.js';
 
@@ -52,9 +52,11 @@ async function start(message: Extract<ToBot, { t: 'start' }>): Promise<void> {
     url: message.url,
     code: message.code,
     name: message.name,
-    iterations: message.level.iterations,
-    explore: message.level.explore,
-    minThinkMs: message.level.minThinkMs,
+    iterations: message.iterations,
+    // Derived rather than sent: the caller picks a number on a slider, and how much the opening is
+    // sampled and how long a move is made to appear to take both follow from it.
+    explore: exploreFor(message.iterations),
+    minThinkMs: minThinkMsFor(message.iterations),
     token: message.token,
     seed: message.seed,
     // A token issued under a different code means the room moved -- a rematch -- and the caller

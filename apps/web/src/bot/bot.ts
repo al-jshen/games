@@ -19,77 +19,86 @@ export const BOT_BASE = '/bots/splendor-duel/current';
 /** Only game with an encoder, a policy layout and a trained net. The rest have no bot to offer. */
 export const BOT_GAME = 'splendor-duel';
 
-export type BotLevelId = 'easy' | 'normal' | 'hard';
+/**
+ * Simulations per move: the strength dial, and the only one.
+ *
+ * The network is the same whatever you pick -- a weaker *network* would mean shipping several -- so
+ * strength here is entirely how long the search gets to think. It was three named levels, and a
+ * continuous dial is both more honest and more useful: the thing being chosen really is a number,
+ * and where a player wants to sit on it depends on how strong they are and how long they are willing
+ * to wait, neither of which three labels can guess.
+ *
+ * 1000 is the default because it is the operating point every measurement of this network was taken
+ * at -- self-play generated its training data there, the gate that promoted it ran there, and the
+ * "beats the heuristic search" figure in `bot.json` is a 1000-iteration number. Above it the search
+ * is stronger but no longer a thing anyone has measured.
+ */
+export const MIN_ITERATIONS = 100;
+export const MAX_ITERATIONS = 5000;
+export const DEFAULT_ITERATIONS = 1000;
+/** One click of the slider. 50 stops is finer than anyone can perceive the difference between. */
+export const ITERATION_STEP = 100;
 
-export interface BotLevel {
-  id: BotLevelId;
-  label: string;
-  /**
-   * Simulations per move. The only strength dial that matters here -- the network is the same at
-   * every level, and a weaker *network* would mean shipping three of them.
-   */
-  iterations: number;
-  /**
-   * Sample the opening from the visit counts instead of taking the favourite, for this many moves.
-   *
-   * Not really a difficulty knob: it is there so the bot does not open identically every game. The
-   * deal is random so games differ regardless, but the first few moves out of a fresh board are the
-   * ones a player would otherwise watch it repeat. Higher on `easy` because varied play is also
-   * weaker play, which is the direction that level wants anyway.
-   */
-  explore: { temperature: number; moves: number };
-  /**
-   * Floor on how long a move appears to take, in milliseconds.
-   *
-   * `easy` searches in about 50ms, and a reply that instant reads as "it did not think" rather than
-   * "it thought quickly" -- and gives the player no beat to see what happened on the board. This is
-   * presentation, not handicap: the search has already finished when the timer runs.
-   */
-  minThinkMs: number;
-  blurb: string;
+export function clampIterations(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_ITERATIONS;
+  return Math.min(MAX_ITERATIONS, Math.max(MIN_ITERATIONS, Math.round(value)));
 }
 
 /**
- * Three points on one dial.
+ * How long one move takes, in milliseconds.
  *
- * Timings are one move at a mid-game position, measured on a Zen 4 workstation under node: 80
- * iterations ~50ms, 300 ~170ms, 1000 ~650ms. A browser is in the same neighbourhood, a phone is
- * slower, and all three are inside what a person waits for without noticing.
+ * Measured on a Zen 4 workstation under node, against the shipped checkpoints at full-depth PUCT:
+ * 100 iterations 0.07s, 300 0.19s, 1000 0.70s, 2000 1.40s, 3000 2.08s, 5000 3.46s. Dead linear at
+ * ~0.7ms an iteration, which is what you would expect when every iteration is one forward pass of
+ * the value head plus one of the policy head.
  *
- * `hard` is 1000 because that is the operating point everything about this network was measured at:
- * self-play generated its training data at 1000 iterations, the gate that promoted it ran at 1000,
- * and the 93% against the heuristic search in `bot.json` is a 1000-iteration number. Turning it up
- * further is untested rather than obviously stronger.
+ * A browser is in the same neighbourhood and a phone is slower, so this is a floor rather than a
+ * promise -- which is why the UI shows it as "about". Worth showing at all because the top of the
+ * range is genuinely slow: 5000 is several seconds a move, and a player should choose that on
+ * purpose rather than discover it.
  */
-export const BOT_LEVELS: readonly BotLevel[] = [
-  {
-    id: 'easy',
-    label: 'Easy',
-    iterations: 80,
-    explore: { temperature: 1, moves: 20 },
-    minThinkMs: 600,
-    blurb: 'Looks a move or two ahead and plays loosely. A place to learn the rules.',
-  },
-  {
-    id: 'normal',
-    label: 'Normal',
-    iterations: 300,
-    explore: { temperature: 0.5, moves: 8 },
-    minThinkMs: 400,
-    blurb: 'Reads the board properly. Will punish a wasted turn.',
-  },
-  {
-    id: 'hard',
-    label: 'Hard',
-    iterations: 1000,
-    explore: { temperature: 0.3, moves: 4 },
-    minThinkMs: 0,
-    blurb: 'Full strength — the exact search the network was measured at.',
-  },
-];
+export function estimateMs(iterations: number): number {
+  return iterations * 0.7;
+}
 
-export function levelById(id: BotLevelId): BotLevel {
-  return BOT_LEVELS.find((level) => level.id === id) ?? (BOT_LEVELS[1] as BotLevel);
+/**
+ * Sample the opening from the visit counts instead of taking the favourite, for this many moves.
+ *
+ * Mostly so the bot does not open identically every game. The deal is random so games differ
+ * regardless, but the first few moves out of a fresh board are the ones a player would otherwise
+ * watch it repeat.
+ *
+ * Interpolated on log(iterations) rather than held constant, because sampling is also a handicap:
+ * at the bottom of the range, where somebody has deliberately asked for a weaker opponent, playing
+ * loosely for the first twenty moves is the direction they were already going. At the top it backs
+ * off to a token amount, enough for variety and not enough to throw a game.
+ */
+export function exploreFor(iterations: number): { temperature: number; moves: number } {
+  const span = Math.log(MAX_ITERATIONS / MIN_ITERATIONS);
+  const t = Math.min(1, Math.max(0, Math.log(clampIterations(iterations) / MIN_ITERATIONS) / span));
+  return { temperature: 1 - 0.7 * t, moves: Math.round(20 - 16 * t) };
+}
+
+/**
+ * Floor on how long a move appears to take, in milliseconds.
+ *
+ * At 100 iterations the search finishes in about 70ms, and a reply that instant reads as "it did not
+ * think" rather than "it thought quickly" -- it also gives the player no beat to see what just
+ * happened on the board. So the *perceived* move time never drops below half a second. This is
+ * presentation, not handicap: the search has already finished before the timer starts, and above
+ * roughly 700 iterations it does nothing at all.
+ */
+export function minThinkMsFor(iterations: number): number {
+  return Math.max(0, 500 - estimateMs(iterations));
+}
+
+/** A short word for where the slider is sitting. Bands are wide; nothing here is measured. */
+export function describeStrength(iterations: number): string {
+  if (iterations < 250) return 'Casual — reads a move or two ahead';
+  if (iterations < 700) return 'Steady — will punish a wasted turn';
+  if (iterations <= 1200) return 'Full strength — where this network was measured';
+  if (iterations <= 3000) return 'Above anything measured — slower, and stronger';
+  return 'Deliberate — several seconds a move';
 }
 
 /** `bot.json`, written by `publish_bot.mjs`. Only the parts the UI shows are typed. */
@@ -114,7 +123,8 @@ export type ToBot =
       code: string;
       name: string;
       base: string;
-      level: BotLevel;
+      /** Simulations per move. Everything else the bot does is derived from it. */
+      iterations: number;
       /** The bot's own seat token, when it has played here before. Null takes a fresh seat. */
       token: string | null;
       /** Seeds the search, so a reload does not replay the same game move for move. */
