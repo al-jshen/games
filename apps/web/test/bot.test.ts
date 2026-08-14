@@ -1,10 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { GameClient } from '@games/client-sdk';
 import { legalActionsFromView, type SplendorView } from '@games/splendor-duel';
 import { startServer, type RunningServer } from '../../server/src/server.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Engine } from '../src/bot/engine.js';
 import { startBot } from '../src/bot/player.js';
-import { publishedEngine } from './published-engine.js';
+import { PUBLISHED, publishedEngine } from './published-engine.js';
 
 /**
  * The bot opponent, against the real server.
@@ -53,14 +54,33 @@ describe('the bot opponent', () => {
     await server?.close();
   });
 
-  it('loads the published checkpoints and knows what they are', () => {
+  it('loads the published checkpoints, and the manifest describes what actually shipped', () => {
     expect(engine.value.kind).toBe('value');
     expect(engine.policy.kind).toBe('policy');
-    // The whole reason `makeNet` checks the parameter count: a truncated blob otherwise reads as a
-    // network whose last layer is full of whatever followed it, and plays on regardless.
-    expect(engine.value.sidecar.parameters).toBe(23073);
-    expect(engine.policy.sidecar.parameters).toBe(753390);
     expect(engine.deps.priors).toBeDefined();
+
+    /*
+     * Checked against `bot.json` rather than against literal parameter counts.
+     *
+     * Literals were the first version and they were the wrong test: they pin the *architecture*,
+     * which is a thing the loop is allowed to change, so publishing a generation with a wider trunk
+     * would fail here for no reason anyone should have to think about. What must hold is that the
+     * manifest and the weights agree -- the panel reads `bot.json` to say which generation you are
+     * playing, so a manifest describing a different checkout from the one being served is exactly
+     * the failure that would go unnoticed.
+     *
+     * `makeNet` has already refused a blob whose length disagrees with its own sidecar, which is the
+     * other half: a truncated file otherwise reads as a network whose last layer is full of whatever
+     * followed it, and plays on regardless.
+     */
+    const manifest = JSON.parse(readFileSync(`${PUBLISHED}/bot.json`, 'utf8')) as {
+      generation: number;
+      value: { parameters: number };
+      policy: { parameters: number };
+    };
+    expect(engine.value.sidecar.parameters).toBe(manifest.value.parameters);
+    expect(engine.policy.sidecar.parameters).toBe(manifest.policy.parameters);
+    expect(manifest.generation).toBeGreaterThanOrEqual(0);
   });
 
   it('takes a seat and plays a game out against a random opponent', async () => {

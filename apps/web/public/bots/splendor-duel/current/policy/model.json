@@ -20,21 +20,21 @@
   "file": "weights.f32",
   "kind": "policy",
   "architecture": "wide",
-  "temperature": 0.9313761843272156,
+  "temperature": 1.0547660764816467,
   "features": 719,
   "slots": 238,
   "held_out": {
-    "ce": 2.6407280374137363,
-    "raw": 2.721796189675369,
-    "top1": 0.4412984092008537,
-    "top5": 0.8057846307087689,
-    "mass": 0.23444278562924178,
-    "excess": 0.3207326341239414,
-    "at_one": 2.6402016550882097
+    "ce": 1.9149975671430157,
+    "raw": 2.0009613456141575,
+    "top1": 0.5463909005688325,
+    "top5": 0.886503864235807,
+    "mass": 0.34750837133949847,
+    "excess": 0.4389141692777203,
+    "at_one": 1.913129475918184
   },
   "baselines": {
-    "uniform_over_visited": 2.9097101259145437,
-    "target_entropy": 2.319995403289795
+    "uniform_over_visited": 2.8700140919062247,
+    "target_entropy": 1.4760833978652954
   },
-  "trained_on_datasets": 40
+  "trained_on_datasets": 80
 }
