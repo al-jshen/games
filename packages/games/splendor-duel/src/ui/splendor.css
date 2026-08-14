@@ -586,11 +586,58 @@
  * acquires things, so letting it size to content meant the board's height budget -- and therefore
  * every card -- changed as the game progressed.
  */
+/*
+ * The strip's height and the size of a reserved card are one decision, not two.
+ *
+ * They used to be two: the strip was `clamp(80px, 11vh, 104px)` and a thumbnail was `--thumb-w`
+ * off a *separate* clamp, so whether a card fitted inside the strip depended on where two unrelated
+ * curves happened to cross. They did not cross anywhere -- measured across nine viewports from
+ * 1024x768 to 2560x1440, the contents overran by 18-21px at every single one, and `overflow: hidden`
+ * meant the bottom of every reserved card was simply gone. Not a small-screen bug; nobody had ever
+ * seen a whole reserved card.
+ *
+ * So the height is named once, and the thumbnail is whatever is left after the header, the
+ * "RESERVED" label and the padding have taken theirs. The subtraction is what keeps them honest: if
+ * the strip grows the cards grow with it, and they cannot overflow it by construction.
+ *
+ * The strip stays a *fixed* height, which is the part of the original design that was right. Sizing
+ * it to content means it grows as a player acquires things, which changes the board's height budget
+ * -- and therefore every card on the table -- in the middle of a game.
+ */
 .sd-player {
-  padding: clamp(4px, 0.7vh, 8px) 10px;
+  --strip-pad: clamp(4px, 0.7vh, 8px);
+  /*
+   * The floor is 88px rather than something roomier, and it binds only below about 680px of
+   * viewport. Raising it to 96 was enough to push the action bar 7px out of the board column at
+   * 1366x620 -- there is a fixed height budget and the strips are spending it. Because the card
+   * size below is *derived* from this, a lower floor makes the reserved cards smaller rather than
+   * clipping them, which is the whole point of tying the two together: the degradation is graceful
+   * instead of destructive.
+   */
+  --strip-h: clamp(88px, 13vh, 124px);
+  /*
+   * Header line plus its margin, and the label line. Both are fixed type sizes, so this is too --
+   * and it is deliberately measured rather than reasoned: 42px was the arithmetic and left a 2px
+   * overhang on every viewport, which is what line-height rounding costs you.
+   */
+  --strip-chrome: 46px;
+  --reserved-h: calc(var(--strip-h) - var(--strip-pad) * 2 - var(--strip-chrome));
+  padding: var(--strip-pad) 10px;
   flex: none;
-  height: clamp(80px, 11vh, 104px);
+  height: var(--strip-h);
   overflow: hidden;
+}
+/*
+ * Height-driven rather than width-driven, the reverse of every other card on the board.
+ *
+ * Elsewhere `--card-w` sets the width and the SVG's own ratio supplies the height, because a flex
+ * row cannot know its height when the parent's intrinsic width is being computed. Here the opposite
+ * is true and it is the constraint that matters: the strip's height is given, so the card is fitted
+ * to it and the width follows.
+ */
+.sd-player .card--small {
+  width: auto;
+  height: var(--reserved-h);
 }
 .sd-player > header {
   gap: 10px;
@@ -610,8 +657,9 @@
   flex: none;
 }
 .sd-facedown {
-  width: var(--thumb-w);
-  height: calc(var(--thumb-w) * 1.452);
+  /* Stands in for a real card, so it is fitted the same way -- see `.sd-player .card--small`. */
+  height: var(--reserved-h);
+  width: calc(var(--reserved-h) / 1.452);
   font-size: 16px;
 }
 
@@ -772,7 +820,13 @@
   flex-wrap: nowrap;
   gap: 22px;
   flex: none;
-  height: clamp(52px, 7vh, 68px);
+  /*
+   * Tall enough for the label and all three win conditions, which it previously was not: at
+   * `clamp(52px, 7vh, 68px)` the contents overran by 13-14px on every viewport below about 1440px
+   * tall, and the third condition -- your best colour, the one people forget exists -- was the row
+   * that fell off the bottom. A win condition you cannot see is worse than one shown small.
+   */
+  height: clamp(78px, 9.5vh, 92px);
   padding: 4px 2px 0;
   border-top: 1px solid var(--line);
   overflow: hidden;

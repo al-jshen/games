@@ -31,21 +31,26 @@ export function Coach({ coach, yourTurn }: { coach: CoachState; yourTurn: boolea
   const read = coach.read;
 
   return (
-    <section className="panel compact coach">
+    <section className={`panel compact coach ${coach.on ? '' : 'coach-idle'}`}>
       <div className="coach-head">
         <h3>Coach</h3>
-        <label className="coach-toggle">
+        <label
+          className="coach-toggle"
+          title="Ask the trained network what it makes of the position, and what it would play. It sees only your side of the board — the same view you have."
+        >
           <input type="checkbox" checked={coach.on} onChange={(e) => coach.setOn(e.target.checked)} />
           <span>{coach.on ? 'On' : 'Off'}</span>
         </label>
       </div>
 
-      {!coach.on && (
-        <p className="muted small">
-          Ask the trained network what it makes of the position, and what it would play. It sees only
-          your side of the board — the same view you have.
-        </p>
-      )}
+      {/*
+        Nothing is rendered when the coach is off, and that is a height decision rather than a
+        stylistic one. The sidebar is the tightest column in the app -- at 1366x620 the chat box was
+        pushed off the bottom of the screen entirely by the three-line explanation that used to sit
+        here, which an e2e test caught and a person would have experienced as "where did chat go".
+        The same words are on the checkbox's `title`, which is where an explanation of a control
+        belongs anyway.
+      */}
 
       {coach.on && coach.error && <p className="error small">{coach.error}</p>}
 

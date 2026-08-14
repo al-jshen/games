@@ -723,6 +723,23 @@ input:focus {
 
 /* ---------------------------------------------------------------- the coach */
 
+/*
+ * Switched off, the coach is one checkbox, and a bordered panel around one checkbox costs 44px of
+ * the tightest column in the app. Measured at 1366x620: the sidebar wants 572px and has 549, and
+ * that 23px difference is what pushed the chat box off the bottom of the screen. Stripped of its
+ * chrome the same control costs about 20px, which is what a control that is doing nothing should
+ * cost. It becomes a real panel the moment it has something to say.
+ */
+.coach-idle {
+  border: none;
+  background: none;
+  padding: 0 2px !important;
+}
+.coach-idle .coach-toggle,
+.coach-idle h3 {
+  /* Both carry a bottom margin meant to separate them from panel content there is none of. */
+  margin-bottom: 0;
+}
 .coach-head {
   display: flex;
   align-items: baseline;
@@ -815,6 +832,21 @@ input:focus {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   font-size: 11px;
+}
+
+/*
+ * On a short window the move log yields first.
+ *
+ * The sidebar's other panels are all irreducible -- a match code is a match code, and the turn guide
+ * has already shrunk to its own minimum by this point -- but the log scrolls internally, so height
+ * taken from it costs a reader two visible lines rather than any information. Without this the
+ * sidebar at 1366x620 came to exactly the height available, which is not a margin, it is a
+ * coincidence waiting for someone to add a line of text somewhere.
+ */
+@media (max-height: 700px) {
+  .log {
+    height: clamp(76px, 14vh, 120px);
+  }
 }
 
 /* Very short windows get their scroll back: below roughly 620px there is no arrangement that fits. */
