@@ -1,5 +1,5 @@
 import { replayFrames, type MatchRecord, type ReplayFrame } from '@games/engine';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { describeEffect } from './effects.js';
 import { gameRules, loadBoard, type BoardModule } from './games.js';
 import { fullMoveTime, moveTimeLabel } from './time.js';
@@ -38,6 +38,8 @@ export function Replay({ code, onLeave }: { code: string; onLeave: () => void })
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [seat, setSeat] = useState(0);
+  const listRef = useRef<HTMLOListElement>(null);
+  const currentRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -83,6 +85,28 @@ export function Replay({ code, onLeave }: { code: string; onLeave: () => void })
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [loaded?.frames.length]);
+
+  /*
+   * Keep the highlighted move where it can be seen. `scrollIntoView({ block: 'nearest' })` says
+   * exactly this, but it says it to every scrollable ancestor at once — the sidebar, and on a short
+   * window the page — so stepping through a game would shift the board out from under the cursor.
+   * The arithmetic below is the same rule applied to the list and nothing else: correct only the
+   * overshoot, in whichever direction it happened, and leave a line that is already in view alone.
+   *
+   * That "already in view" test is also the whole of the politeness towards someone who has scrolled
+   * off to compare two positions. There is no flag remembering that they wandered, because the index
+   * only ever moves when they move it: whoever just asked for move 12 is asking to be shown move 12,
+   * and refusing on the grounds that they were reading move 40 a second ago would be the ruder half.
+   */
+  useEffect(() => {
+    const list = listRef.current;
+    const current = currentRef.current;
+    if (!list || !current) return;
+    const box = list.getBoundingClientRect();
+    const row = current.getBoundingClientRect();
+    if (row.top < box.top) list.scrollTop -= box.top - row.top;
+    else if (row.bottom > box.bottom) list.scrollTop += row.bottom - box.bottom;
+  }, [index, loaded]);
 
   /*
    * Above the early returns on purpose: a hook after a conditional `return` is called on some renders
@@ -132,6 +156,7 @@ export function Replay({ code, onLeave }: { code: string; onLeave: () => void })
     : record.seats.map((s) => `Player ${s + 1}`);
 
   const summary = frame.effects.map((effect) => renderEffect(effect, frame.seat ?? 0, describe)).filter(Boolean);
+  const caption = index === 0 ? 'Opening position' : summary.join(' · ') || `Move ${index}`;
 
   return (
     <main className="room replay">
@@ -174,14 +199,18 @@ export function Replay({ code, onLeave }: { code: string; onLeave: () => void })
               {index} / {last}
             </span>
           </div>
-          <ol>
+          {/*
+            Every move, not a window of the last sixty as this once kept: the log is the thing you
+            navigate a replay with, and a jump landing on a move too old to be listed would scroll to
+            nothing and highlight nothing. A finished game is a few hundred rows at the very worst.
+          */}
+          <ol ref={listRef}>
             {frames
               .map((f, i) => ({ f, i }))
               .filter(({ i }) => i > 0)
               .reverse()
-              .slice(0, 60)
               .map(({ f, i }) => (
-                <li key={f.version}>
+                <li key={f.version} ref={i === index ? currentRef : null}>
                   <button
                     type="button"
                     className={`replay-jump ${i === index ? 'active' : ''}`}
@@ -239,8 +268,10 @@ export function Replay({ code, onLeave }: { code: string; onLeave: () => void })
           >
             ⏭
           </button>
-          <span className="muted small replay-caption">
-            {index === 0 ? 'Opening position' : summary.join(' · ') || `Move ${index}`}
+          {/* `title` because the caption sits in a fixed width and a wordy move is cut short there;
+              see `.replay-caption` for why the width is fixed. */}
+          <span className="muted small replay-caption" title={caption}>
+            {caption}
           </span>
         </div>
 

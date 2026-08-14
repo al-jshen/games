@@ -255,10 +255,16 @@ input:focus {
   min-width: 0;
   accent-color: var(--accent);
 }
+/*
+ * A reserved column, not a label that takes what it needs: sized from the description it was left to
+ * size itself, and every step of the replay changed its width, which moved the two arrows beside it.
+ * Aiming at a button that walks away between clicks is the whole complaint. The width is fixed, the
+ * range slider absorbs the difference, and anything longer is cut with an ellipsis -- the full text
+ * is on the `title`, and the same words are on the board in front of you anyway.
+ */
 .replay-caption {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 40%;
+  flex: 0 0 auto;
+  width: clamp(140px, 22vw, 260px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -467,6 +473,21 @@ input:focus {
   flex-direction: column;
   height: clamp(88px, 18vh, 200px);
   flex: 0 0 auto;
+}
+/*
+ * The replay is the one place where that argument does not hold: there is no chat panel and no turn
+ * guide, nothing below the log wants the height, so pinning it just leaves the sidebar half empty.
+ * `flex-basis: auto` and let it fight nobody -- a short game grows the panel into the free space, a
+ * long one is shrunk back down to whatever is left, and either way the `ol` scrolls inside it.
+ *
+ * The floor is the room's own height rather than a bare pixel count, so a window too short to give
+ * the log anything lands exactly where the room already lands instead of somewhere worse. Past that
+ * the sidebar scrolls, which is the failure it is already set up for.
+ */
+.replay .log {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: clamp(88px, 18vh, 200px);
 }
 .log ol {
   list-style: none;
