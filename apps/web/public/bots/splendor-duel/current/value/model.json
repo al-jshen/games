@@ -17,16 +17,16 @@
   "architecture": "tiny",
   "value_lambda": 0,
   "features": 719,
-  "games": 160000,
+  "games": 96000,
   "held_out": {
-    "mse": 0.8532841205596924,
-    "accuracy": 0.6406952839704813,
-    "corr": 0.3833244815078008,
+    "mse": 0.8473984599113464,
+    "accuracy": 0.6426934972230649,
+    "corr": 0.39076129375798724,
     "epoch": 0
   },
   "baselines": {
-    "heuristic": 0.9223524928092957,
-    "search_q": 0.8631998300552368
+    "heuristic": 0.9222992062568665,
+    "search_q": 0.8575211763381958
   },
-  "trained_on_datasets": 80
+  "trained_on_datasets": 96
 }
