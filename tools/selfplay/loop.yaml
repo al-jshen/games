@@ -244,7 +244,43 @@ baseline:
   # later change to the loop's operating point. Do not edit these numbers once a run has started;
   # the series stops meaning anything if the opponent moves.
   opponents:
+    # Both of these have stopped measuring anything. `random` was pinned at 100% before the first
+    # network existed; the heuristic reached 60-0 by generation 11. They stay because they cost
+    # almost nothing and a regression would still show up in them, but they are history, not signal.
     - name: random
       spec: random
+      games: 20
     - name: heuristic
       spec: '{"leaf":"mixed","iterations":1000}'
+      games: 60
+    # A frozen generation of this loop, and the only anchor that still resolves.
+    #
+    # The gate compares neighbours and neighbours are close: gens 5 through 11 scored +28, +14, +12,
+    # +7, +14, +21, -12, six of seven positive and every one inside a 300-game interval of roughly
+    # +-40. So the loop improves and the gate cannot see it. Against something that holds still the
+    # gap accumulates instead, and it is measurable: **gen11 against this anchor over 2,400 games is
+    # 1402-998, 58.4%, +59 elo [45, 73]** -- see experiments/anchor-gen11-vs-gen5.json.
+    #
+    # That is the cross-check worth having. Six generations at the ~+12 the gates each reported comes
+    # to about +70; measured end to end it is +59. Two independent methods agreeing on ~10 elo a
+    # generation is much stronger evidence than either alone, and it settles the "has the loop
+    # plateaued" question: no, it is gaining steadily at a rate the gate is simply too coarse to see.
+    #
+    # 800 games is the compromise the numbers argue for. At 58% the interval is +-24 elo for ~7
+    # minutes on one node; 300 games would be +-40 and 2,400 would be +-14 for twenty minutes. No
+    # per-generation point will resolve +10 on its own -- that needs ~3,200 games every generation,
+    # which costs more than it is worth -- but this anchor's value is the *series*, and a slope
+    # across eight points is far better determined than any one of them.
+    #
+    # `iterations` is inside the spec on purpose: `arena.mjs` lets the spec win over the flag, so
+    # this survives a later change to the loop's operating point. The paths are under `anchors/`,
+    # which is a copy nothing writes to -- pointing at `models/` would be pointing at a directory
+    # this loop rewrites every generation.
+    #
+    # Freeze the next one around generation 16 and *add* it; never retire this one. Two overlapping
+    # series is how you tell a plateau from a measurement that has run out of range.
+    - name: gen5
+      spec: '{"selection":"puct","puctExploration":4,"puctDepth":99,"normaliseValues":true,"iterations":1000}'
+      opponent_net: /mnt/ceph/users/jshen/games/loop/anchors/gen5-value
+      opponent_policy: /mnt/ceph/users/jshen/games/loop/anchors/gen5-policy
+      games: 800

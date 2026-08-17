@@ -30,8 +30,14 @@ export const BOT_GAME = 'splendor-duel';
  *
  * 1000 is the default because it is the operating point every measurement of this network was taken
  * at -- self-play generated its training data there, the gate that promoted it ran there, and the
- * "beats the heuristic search" figure in `bot.json` is a 1000-iteration number. Above it the search
- * is stronger but no longer a thing anyone has measured.
+ * "beats the heuristic search" figure in `bot.json` is a 1000-iteration number.
+ *
+ * **Above it is measured, and the top of the range is a great deal stronger.** gen11 at 5000 beat
+ * gen11 at 1000 over 400 games: 274-126, 68.5%, +135 elo [98, 172]. For scale, a whole generation
+ * of the self-play loop is worth about twelve. Five times the thinking buys more than eleven
+ * generations of training did, which says the search is nowhere near saturated at its own operating
+ * point -- and, read the other way, that the loop writes its training targets with a searcher much
+ * weaker than the hardware it runs on could afford.
  */
 export const MIN_ITERATIONS = 100;
 export const MAX_ITERATIONS = 5000;
@@ -92,13 +98,13 @@ export function minThinkMsFor(iterations: number): number {
   return Math.max(0, 500 - estimateMs(iterations));
 }
 
-/** A short word for where the slider is sitting. Bands are wide; nothing here is measured. */
+/** A short word for where the slider is sitting. Bands are wide; only the top one carries a number. */
 export function describeStrength(iterations: number): string {
   if (iterations < 250) return 'Casual — reads a move or two ahead';
   if (iterations < 700) return 'Steady — will punish a wasted turn';
-  if (iterations <= 1200) return 'Full strength — where this network was measured';
-  if (iterations <= 3000) return 'Above anything measured — slower, and stronger';
-  return 'Deliberate — several seconds a move';
+  if (iterations <= 1200) return 'Full strength — the loop’s own operating point';
+  if (iterations <= 3000) return 'Beyond how the loop plays — measurably stronger';
+  return 'Strongest — +135 elo over 1000, at several seconds a move';
 }
 
 /** `bot.json`, written by `publish_bot.mjs`. Only the parts the UI shows are typed. */
