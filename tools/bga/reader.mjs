@@ -15,7 +15,7 @@
 export function tableIdOf(url) {
   const id = new URL(url).searchParams.get('table');
   if (!id || !/^\d+$/.test(id)) {
-    throw new Error(`No table id in "${url}". Pass the game's own URL, like https://boardgamearena.com/1/splendorduel?table=123456789`);
+    throw new Error(`No table id in "${url}". Pass the table's URL as the browser shows it, like https://boardgamearena.com/tableview?table=123456789`);
   }
   return id;
 }
@@ -34,6 +34,26 @@ export function sameTable(url, tableId) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether `url` is the Splendor Duel game of table `tableId`: `/<server number>/splendorduel?table=<id>`.
+ *
+ * Seen live: the address the browser shows for a table, `/tableview?table=…`, is a shell. The game
+ * runs in a frame inside it at this address, and BGA sends a browser that asks for this address
+ * directly back to the shell. So `gameui` is never in the page itself, only in that frame.
+ */
+export function isGameOf(url, tableId) {
+  try {
+    return /^\/\d+\/splendorduel\/?$/.test(new URL(url).pathname) && sameTable(url, tableId);
+  } catch {
+    return false;
+  }
+}
+
+/** The frame table `tableId`'s game runs in -- the page's own, should BGA ever serve it bare -- or null. */
+function gameFrame(page, tableId) {
+  return page.frames().find((frame) => isGameOf(frame.url(), tableId)) ?? null;
 }
 
 /** Throws unless the page is still on table `tableId`, naming where it is instead. */
@@ -60,26 +80,34 @@ export function playerIdsOf(raw) {
   return Object.keys(players);
 }
 
-async function ready(page) {
+const loaded = () =>
+  typeof gameui !== 'undefined' && gameui !== null && Boolean(gameui.gamedatas?.gamestate) && Boolean(document.getElementById('board'));
+
+/** Waits for the game's frame to be there and loaded, and returns it. */
+async function ready(page, tableId) {
+  let found = false;
   try {
-    await page.waitForFunction(
-      () => typeof gameui !== 'undefined' && gameui !== null && Boolean(gameui.gamedatas?.gamestate) && Boolean(document.getElementById('board')),
-      null,
-      { timeout: 60_000 },
-    );
+    for (const deadline = Date.now() + 60_000; Date.now() < deadline; await page.waitForTimeout(250)) {
+      const frame = gameFrame(page, tableId);
+      if (!frame) continue;
+      found = true;
+      // A frame that navigates under the question is asked again on the next round.
+      if (await frame.evaluate(loaded).catch(() => false)) return frame;
+    }
   } catch {
-    // Say where the browser actually is: the commonest cause is a URL that is about the table but
-    // is not the game -- the table's own page carries the same id and none of the game state.
-    throw new Error(
-      `The page at ${page.url()} did not become a Splendor Duel game within a minute. ` +
-        'Is that the game itself (https://boardgamearena.com/<number>/splendorduel?table=…) and not the table\'s page, ' +
-        'is the game in progress, and is the browser signed in (`npm run bga -- login`)?',
-    );
+    // The page was closed while waiting; it did not become a game.
   }
+  throw new Error(
+    `The page at ${page.url()} did not become a Splendor Duel game within a minute: ` +
+      (found
+        ? `the game's frame was there and never finished loading (gameui, its game state, and the board). `
+        : `nothing in it was at /<number>/splendorduel?table=${tableId}. `) +
+      'Is the game in progress (not waiting for players, not over), and is the browser signed in (`npm run bga -- login`)?',
+  );
 }
 
-function readRaw(page, tableId) {
-  return page.evaluate((id) => {
+function readRaw(frame, tableId) {
+  return frame.evaluate((id) => {
     const g = gameui.gamedatas;
     // Through JSON, so what crosses to node is data and nothing else: no functions, no DOM nodes.
     return JSON.parse(
@@ -101,8 +129,8 @@ function readRaw(page, tableId) {
   }, tableId);
 }
 
-function readPulse(page) {
-  return page.evaluate(() => {
+function readPulse(frame) {
+  return frame.evaluate(() => {
     const state = gameui.gamedatas.gamestate;
     return { name: String(state.name), active: Number(state.active_player ?? 0), args: JSON.stringify(state.args ?? null) };
   });
@@ -113,28 +141,36 @@ function readPulse(page) {
  * the person calibrating can watch; `advise` and `play` do not, and stay quiet.
  */
 export function makeTable(page, tableId, { log = () => {} } = {}) {
+  /** The game's frame as it is now. A reload replaces it, so it is looked up each time and never kept. */
+  const game = () => {
+    stillOn(page, tableId);
+    const frame = gameFrame(page, tableId);
+    if (!frame) throw new Error(`The browser is on table ${tableId} and is not showing its game (${page.url()}).`);
+    return frame;
+  };
+
   return {
     /** A full, current snapshot. Reloads the page. */
     async snapshot() {
       log('reloading the page');
       await page.reload({ waitUntil: 'domcontentloaded' });
-      log('waiting for the game to finish loading (gameui, its game state, and the board), up to a minute');
-      await ready(page);
+      log('waiting for the game to finish loading (its frame, gameui, its game state, and the board), up to a minute');
+      const frame = await ready(page, tableId);
       stillOn(page, tableId);
+      log(`the game is in ${frame === page.mainFrame() ? 'the page itself' : `a frame at ${frame.url()}`}`);
       log('reading the game state the page was given (gameui.gamedatas)');
-      return readRaw(page, tableId);
+      return readRaw(frame, tableId);
     },
 
     /** The state's name, whose turn it is, and its arguments. Cheap; does not reload. */
     async pulse() {
-      stillOn(page, tableId);
       try {
-        return await readPulse(page);
+        return await readPulse(game());
       } catch {
         // The page was mid-navigation. Wait for it to be a game again and ask once more.
-        await ready(page);
+        const frame = await ready(page, tableId);
         stillOn(page, tableId);
-        return readPulse(page);
+        return readPulse(frame);
       }
     },
 
@@ -145,7 +181,7 @@ export function makeTable(page, tableId, { log = () => {} } = {}) {
 
     /** Outline these elements on the page, and nothing else. */
     async show(ids) {
-      await page.evaluate((wanted) => {
+      await game().evaluate((wanted) => {
         const STYLE = 'bga-adapter-style';
         const HINT = 'bga-adapter-hint';
         if (!document.getElementById(STYLE)) {
@@ -167,8 +203,7 @@ export function makeTable(page, tableId, { log = () => {} } = {}) {
      * own message, and so does a call the page declined to send at all.
      */
     async perform(call) {
-      stillOn(page, tableId);
-      await page.evaluate(async ({ name, args }) => {
+      await game().evaluate(async ({ name, args }) => {
         const current = gameui.bga?.actions;
         const send =
           current && typeof current.performAction === 'function'
@@ -201,7 +236,7 @@ export function makeTable(page, tableId, { log = () => {} } = {}) {
      */
     async facts(playerIds) {
       log("asking BGA for the table's settings (tableinfos, through the page's own ajaxcall), up to 10s");
-      const info = await page.evaluate(
+      const info = await game().evaluate(
         (id) =>
           new Promise((resolve) => {
             const done = (value) => resolve(value ?? null);
@@ -217,7 +252,7 @@ export function makeTable(page, tableId, { log = () => {} } = {}) {
         tableId,
       );
       log(`reading ratings from the player panels (#player_elo_<id>) for ${playerIds.length > 0 ? playerIds.join(', ') : 'no players'}`);
-      const ratings = await page.evaluate(
+      const ratings = await game().evaluate(
         (ids) =>
           Object.fromEntries(
             ids.map((id) => {
@@ -234,7 +269,7 @@ export function makeTable(page, tableId, { log = () => {} } = {}) {
     /** Every plain value on `gameui`, for calibration. Anything that looks like a credential is left out. */
     async primitives() {
       log('listing the plain values on gameui (credential-looking names left out)');
-      return page.evaluate(() =>
+      return game().evaluate(() =>
         Object.fromEntries(
           Object.entries(gameui).filter(
             ([key, value]) =>
