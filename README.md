@@ -76,6 +76,16 @@ RTT dominates everything: at 20 ms RTT expect ~50 moves/sec. For training, drive
 instead — the same code without a socket runs at ~90,000 moves/sec. `npm run bench` and
 `docs/protocol.md` have the full numbers.
 
+### Measure it against people, on BoardGameArena
+
+```bash
+npm run bga -- advise --table '<a friendly-mode game URL>'    # it tells you what to click
+npm run bga -- report                                         # the rating the games so far support
+```
+
+The published network at a real table, in disclosed, unrated friendly games only — the adapter
+refuses anything else. `tools/bga/README.md` has the conditions and the rest.
+
 ## Deploying
 
 One process, one port, no native dependencies.
@@ -113,10 +123,12 @@ packages/client-sdk/          WS client: reconnect, prediction, typed submit. Us
 packages/net/                 forward pass for the trained checkpoints. No IO: node and browser both.
 packages/bot-ismcts/          ISMCTS + PUCT, game-agnostic
 packages/bot-splendor-duel/   wires that search to this game, with or without a network
+packages/bga-splendor-duel/   a BoardGameArena table, translated to and from this game's own types
 apps/server/                  HTTP + WebSocket, rooms, sessions, replay log
 apps/web/                     Vite + React shell: lobby, room codes, move log, the bot and the coach
 sdk/python/                   zero-dependency bot client + example bots
 tools/scrape-cards/           builds and validates the card data
+tools/bga/                    sit the published network at a friendly BGA table: advise, or play
 tools/verify-spiral/          re-derives the board spiral from the printed art
 e2e/                          Playwright: two browsers, real matches
 docs/                         protocol.md · splendor-duel-rules.md · adding-a-game.md · deploying.md
