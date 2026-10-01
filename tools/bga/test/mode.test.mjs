@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest';
+import { guard, tableMode } from '../mode.mjs';
+
+/**
+ * The gate both modes pass through. It is the one piece of this tool whose failure mode is not
+ * "the bot plays badly" but "the bot plays somewhere it must not", so every way it can be unsure
+ * has to come out as a refusal.
+ */
+
+const info = (mode, id = '123') => ({ id, options: { 100: { value: '0' }, 201: { value: mode } } });
+const snapshot = (over = {}) => ({
+  me: 1,
+  gamedatas: { expansion: false, players: { 1: { id: 1 }, 2: { id: 2 } }, ...over },
+});
+
+describe('tableMode', () => {
+  it('reads the game-mode option', () => {
+    expect(tableMode(info('1'))).toBe('friendly');
+    expect(tableMode(info(1))).toBe('friendly');
+    expect(tableMode(info('0'))).toBe('rated');
+    expect(tableMode(info('2'))).toBe('rated');
+  });
+
+  it('accepts the same answer wrapped in a `data` envelope', () => {
+    expect(tableMode({ status: 1, data: info('1') })).toBe('friendly');
+  });
+
+  it('is unknown for anything it does not recognise', () => {
+    expect(tableMode(null)).toBe('unknown');
+    expect(tableMode({})).toBe('unknown');
+    expect(tableMode({ options: {} })).toBe('unknown');
+    expect(tableMode(info('7'))).toBe('unknown');
+    expect(tableMode(info(undefined))).toBe('unknown');
+  });
+});
+
+describe('guard', () => {
+  const pass = { info: info('1'), tableId: '123', snapshot: snapshot(), verified: true };
+
+  it('lets a friendly, base-game table we are seated at through', () => {
+    expect(guard(pass)).toEqual({ ok: true });
+  });
+
+  it('refuses everything until the mode check has been verified against live tables', () => {
+    const verdict = guard({ ...pass, verified: undefined });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.why).toMatch(/not been confirmed/);
+  });
+
+  it('refuses a rated table', () => {
+    for (const mode of ['0', '2']) {
+      const verdict = guard({ ...pass, info: info(mode) });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.why).toMatch(/friendly/);
+    }
+  });
+
+  it('refuses when it cannot tell', () => {
+    expect(guard({ ...pass, info: null }).ok).toBe(false);
+    expect(guard({ ...pass, info: {} }).ok).toBe(false);
+    // Settings for some other table are not settings for this one.
+    expect(guard({ ...pass, info: info('1', '999') }).ok).toBe(false);
+  });
+
+  it('refuses the expansion, and a table we are only watching', () => {
+    expect(guard({ ...pass, snapshot: snapshot({ expansion: true }) }).why).toMatch(/expansion/i);
+    expect(guard({ ...pass, snapshot: { ...snapshot(), me: 9 } }).why).toMatch(/not seated/);
+  });
+});
