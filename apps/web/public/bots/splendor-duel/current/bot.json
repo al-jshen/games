@@ -1,8 +1,8 @@
 {
-  "id": "gen11",
+  "id": "gen21",
   "game": "splendor-duel",
-  "generation": 11,
-  "published": "2026-08-14",
+  "generation": 21,
+  "published": "2026-08-17",
   "source": "/mnt/ceph/users/jshen/games/loop",
   "value": {
     "dir": "value",
@@ -10,14 +10,14 @@
     "parameters": 23073,
     "bytes": 92292,
     "heldOut": {
-      "mse": 0.8532841205596924,
-      "accuracy": 0.6406952839704813,
-      "corr": 0.3833244815078008,
+      "mse": 0.8473984599113464,
+      "accuracy": 0.6426934972230649,
+      "corr": 0.39076129375798724,
       "epoch": 0
     },
     "baselines": {
-      "heuristic": 0.9223524928092957,
-      "search_q": 0.8631998300552368
+      "heuristic": 0.9222992062568665,
+      "search_q": 0.8575211763381958
     }
   },
   "policy": {
@@ -26,27 +26,27 @@
     "parameters": 753390,
     "bytes": 3013560,
     "heldOut": {
-      "ce": 1.9149975671430157,
-      "raw": 2.0009613456141575,
-      "top1": 0.5463909005688325,
-      "top5": 0.886503864235807,
-      "mass": 0.34750837133949847,
-      "excess": 0.4389141692777203,
-      "at_one": 1.913129475918184
+      "ce": 1.7489273196412605,
+      "raw": 1.8239285351886492,
+      "top1": 0.5337670639262423,
+      "top5": 0.8741279309168343,
+      "mass": 0.3812813717692022,
+      "excess": 0.587618435020594,
+      "at_one": 1.7483271823724886
     },
     "baselines": {
-      "uniform_over_visited": 2.8700140919062247,
-      "target_entropy": 1.4760833978652954
+      "uniform_over_visited": 2.792586619990331,
+      "target_entropy": 1.1613088846206665
     },
-    "temperature": 1.0547660764816467
+    "temperature": 0.9313761843272156
   },
   "measured": {
     "accepted": true,
-    "gate": 0.48333333333333334,
+    "gate": 0.5033333333333333,
     "baseline": {
       "random": 1,
-      "heuristic": 1
+      "heuristic": 0.9666666666666667
     },
-    "datasets": 80
+    "datasets": 96
   }
 }
