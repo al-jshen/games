@@ -94,6 +94,33 @@ export default tseslint.config(
     },
   },
   {
+    // The BGA translation is held to the standard of a game module: pure functions of their inputs.
+    // Everything that touches a page, a file or a clock lives in tools/bga, so that what the bot is
+    // told about a position can be tested without a browser and cannot depend on when it was asked.
+    files: ['packages/bga-splendor-duel/src/**/*.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'Date', message: 'The translation must not read the clock.' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'Math', property: 'random', message: 'The translation must be deterministic.' },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['node:*', 'playwright', 'playwright/*', '@playwright/*', '@games/protocol', '@games/client-sdk'],
+              message: 'packages/bga-splendor-duel is pure. Page and file access belong in tools/bga.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The server must never pull a game's React UI into its dependency graph.
     files: ['apps/server/src/**/*.ts'],
     rules: {

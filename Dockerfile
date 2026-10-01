@@ -27,6 +27,7 @@ COPY packages/client-sdk/package.json packages/client-sdk/
 COPY packages/net/package.json packages/net/
 COPY packages/bot-ismcts/package.json packages/bot-ismcts/
 COPY packages/bot-splendor-duel/package.json packages/bot-splendor-duel/
+COPY packages/bga-splendor-duel/package.json packages/bga-splendor-duel/
 COPY packages/games/splendor-duel/package.json packages/games/splendor-duel/
 COPY packages/games/tic-tac-toe/package.json packages/games/tic-tac-toe/
 COPY apps/server/package.json apps/server/

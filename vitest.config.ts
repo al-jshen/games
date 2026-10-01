@@ -14,6 +14,7 @@ export default defineConfig({
       { find: '@games/net', replacement: fileURLToPath(new URL('./packages/net/src/index.ts', import.meta.url)) },
       { find: '@games/bot-splendor-duel', replacement: fileURLToPath(new URL('./packages/bot-splendor-duel/src/index.ts', import.meta.url)) },
       { find: '@games/bot-ismcts', replacement: fileURLToPath(new URL('./packages/bot-ismcts/src/index.ts', import.meta.url)) },
+      { find: '@games/bga-splendor-duel', replacement: fileURLToPath(new URL('./packages/bga-splendor-duel/src/index.ts', import.meta.url)) },
       { find: '@games/splendor-duel/ui', replacement: fileURLToPath(new URL('./packages/games/splendor-duel/src/ui/index.tsx', import.meta.url)) },
       { find: '@games/splendor-duel', replacement: fileURLToPath(new URL('./packages/games/splendor-duel/src/index.ts', import.meta.url)) },
       { find: '@games/tic-tac-toe/ui', replacement: fileURLToPath(new URL('./packages/games/tic-tac-toe/src/ui/index.tsx', import.meta.url)) },

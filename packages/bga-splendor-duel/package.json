@@ -1,0 +1,22 @@
+{
+  "name": "@games/bga-splendor-duel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@games/engine": "*",
+    "@games/splendor-duel": "*",
+    "zod": "^4.4.3"
+  }
+}
