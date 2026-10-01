@@ -164,7 +164,10 @@ and `pickAction` as the web client, so the agent on BGA is the agent that was me
 ### The loop
 
 1. Check the table is friendly mode and the expansion is off. Otherwise exit. Wait for the operator
-   to confirm the bot notice is in the chat.
+   to confirm the bot notice is in the chat. From here on the loop is bound to that table: every
+   snapshot, every poll and every action call first checks that the page's own `table` parameter
+   is still the id that was vetted, and stops (`page-error`) if the tab has been taken anywhere
+   else — another table the account sits at would read just as well, and was never checked.
 2. Wait until the page says it is our turn to decide. (At the start of each opponent turn, take one
    snapshot for memory and do nothing else.)
 3. Take a fresh full snapshot — a page reload, which is the one way the page offers to get the

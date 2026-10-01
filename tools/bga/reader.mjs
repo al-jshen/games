@@ -20,6 +20,35 @@ export function tableIdOf(url) {
   return id;
 }
 
+/**
+ * Whether `url` is the page of table `tableId`.
+ *
+ * The guard vets one table, once. The controlled tab can still be navigated to another Splendor
+ * Duel game the account is seated at, and that page would read just as well -- so everything that
+ * reads or acts checks first that the page is still the table that was vetted.
+ */
+export function sameTable(url, tableId) {
+  try {
+    const id = new URL(url).searchParams.get('table');
+    return typeof tableId === 'string' && /^\d+$/.test(tableId) && id === tableId;
+  } catch {
+    return false;
+  }
+}
+
+/** Throws unless the page is still on table `tableId`, naming where it is instead. */
+function stillOn(page, tableId) {
+  const url = page.url();
+  if (sameTable(url, tableId)) return;
+  let other = null;
+  try {
+    other = new URL(url).searchParams.get('table');
+  } catch {
+    // Not a URL at all; name it as it is.
+  }
+  throw new Error(`The browser is no longer on table ${tableId}: it is on ${other ? `table ${other} (${url})` : `"${url}"`}.`);
+}
+
 async function ready(page) {
   try {
     await page.waitForFunction(
@@ -68,18 +97,26 @@ export function makeTable(page, tableId) {
     async snapshot() {
       await page.reload({ waitUntil: 'domcontentloaded' });
       await ready(page);
+      stillOn(page, tableId);
       return readRaw(page, tableId);
     },
 
     /** The state's name, whose turn it is, and its arguments. Cheap; does not reload. */
     async pulse() {
+      stillOn(page, tableId);
       try {
         return await readPulse(page);
       } catch {
         // The page was mid-navigation. Wait for it to be a game again and ask once more.
         await ready(page);
+        stillOn(page, tableId);
         return readPulse(page);
       }
+    },
+
+    /** Whether the operator has closed the page. */
+    closed() {
+      return page.isClosed();
     },
 
     /** Outline these elements on the page, and nothing else. */
@@ -106,6 +143,7 @@ export function makeTable(page, tableId) {
      * own message.
      */
     async perform(call) {
+      stillOn(page, tableId);
       await page.evaluate(async ({ name, args }) => {
         const current = gameui.bga?.actions;
         const send =

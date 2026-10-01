@@ -47,6 +47,24 @@ describe('guard', () => {
     expect(verdict.why).toMatch(/not been confirmed/);
   });
 
+  it('takes the gate as open only when it is exactly true', () => {
+    for (const verified of [false, 1, 'true', 'yes', {}, []]) {
+      const verdict = guard({ ...pass, verified });
+      expect(verdict.ok, String(verified)).toBe(false);
+      expect(verdict.why).toMatch(/not been confirmed/);
+    }
+  });
+
+  it('refuses without a table id it can trust, even when the settings carry none either', () => {
+    // Both sides missing used to compare equal ("undefined" === "undefined").
+    const noId = { options: { 201: { value: '1' } } };
+    expect(guard({ ...pass, tableId: undefined, info: noId }).ok).toBe(false);
+    expect(guard({ ...pass, tableId: '', info: { ...noId, id: '' } }).ok).toBe(false);
+    expect(guard({ ...pass, tableId: '12a', info: info('1', '12a') }).ok).toBe(false);
+    expect(guard({ ...pass, tableId: ' 123', info: info('1', ' 123') }).ok).toBe(false);
+    expect(guard({ ...pass, tableId: '-123', info: info('1', '-123') }).ok).toBe(false);
+  });
+
   it('refuses a rated table', () => {
     for (const mode of ['0', '2']) {
       const verdict = guard({ ...pass, info: info(mode) });

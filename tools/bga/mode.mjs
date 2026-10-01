@@ -31,11 +31,15 @@ export function tableMode(info) {
 const no = (why) => ({ ok: false, why });
 
 export function guard({ info, tableId, snapshot, verified = MODE_CHECK_VERIFIED }) {
-  if (!verified) {
+  // Exactly `true`: a gate that a stray truthy value can open is not a gate.
+  if (verified !== true) {
     return no('The friendly-mode check has not been confirmed against live tables yet (tools/bga/README.md, "Calibration").');
   }
+  if (typeof tableId !== 'string' || !/^\d+$/.test(tableId)) {
+    return no(`"${String(tableId)}" is not a BGA table id, so there is no table to check.`);
+  }
   const data = info?.data ?? info;
-  if (String(data?.id) !== String(tableId)) {
+  if (String(data?.id) !== tableId) {
     return no("Could not read this table's settings, so cannot tell whether it is friendly mode.");
   }
   const mode = tableMode(info);
