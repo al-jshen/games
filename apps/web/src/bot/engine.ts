@@ -13,8 +13,8 @@
  * a worker, in a worker, and the page above it stays a page.
  */
 
-import { search, withConfig, type SearchResult } from '@games/bot-ismcts';
-import { netDeps, type SplendorSearchDeps } from '@games/bot-splendor-duel';
+import { search, type SearchResult } from '@games/bot-ismcts';
+import { netDeps, operatingPoint, type SplendorSearchDeps } from '@games/bot-splendor-duel';
 import { fetchNet, type Net } from '@games/net';
 import type { SplendorAction, SplendorView } from '@games/splendor-duel';
 
@@ -35,29 +35,6 @@ export async function loadEngine(base: string): Promise<Engine> {
   return { value, policy, deps: netDeps(value, policy) };
 }
 
-/**
- * The search's operating point, which is deliberately not a choice made here.
- *
- * Every one of these is copied from `tools/selfplay/loop.yaml`, and the reason to copy rather than
- * to tune is that the numbers attached to this network -- 93% against the heuristic search, the
- * +182 elo for full-depth priors -- were all measured with exactly these settings. A browser that
- * quietly ran `puctDepth: 0` because it seemed cheaper would be shipping a different and weaker
- * agent under the same name.
- *
- * `iterations` is the one thing a caller varies, and it is the one thing the difficulty levels are.
- */
-export function config(iterations: number, seed: string) {
-  return withConfig({
-    iterations,
-    seed,
-    leaf: 'evaluate',
-    selection: 'puct',
-    puctExploration: 4,
-    puctDepth: 99,
-    normaliseValues: true,
-  });
-}
-
 /** One search from a redacted view, exactly as the arena runs it. */
 export function think(
   engine: Engine,
@@ -66,5 +43,5 @@ export function think(
   iterations: number,
   seed: string,
 ): SearchResult<SplendorAction> {
-  return search(engine.deps, view, seat, config(iterations, seed));
+  return search(engine.deps, view, seat, operatingPoint(iterations, seed));
 }

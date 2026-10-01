@@ -14,7 +14,7 @@
  */
 
 import { RandomCursor, type Seat } from '@games/engine';
-import type { SearchDeps } from '@games/bot-ismcts';
+import { withConfig, type SearchConfig, type SearchDeps } from '@games/bot-ismcts';
 import { policyOf, valueOf, type Net } from '@games/net';
 import {
   determinize,
@@ -42,6 +42,32 @@ export type SplendorSearchDeps = SearchDeps<SplendorState, SplendorAction, Splen
  * human game needs it for the duller reason that a stalled position should resolve rather than sit.
  */
 export const OPTIONS: SplendorOptions = { maxTurnsWithoutPurchase: 60 };
+
+/**
+ * The search's operating point, which is deliberately not a choice made by its callers.
+ *
+ * Every one of these is copied from `tools/selfplay/loop.yaml`, and the reason to copy rather than
+ * to tune is that the numbers attached to the network -- 93% against the heuristic search, the
+ * +182 elo for full-depth priors -- were all measured with exactly these settings. A caller that
+ * quietly ran `puctDepth: 0` because it seemed cheaper would be playing a different and weaker
+ * agent under the same name.
+ *
+ * It lives here for the reason `netDeps` does: it has more than one caller -- the browser, and the
+ * BGA adapter in `tools/bga` -- and they must not drift.
+ *
+ * `iterations` is the one thing a caller varies, and it is the one thing the difficulty dial is.
+ */
+export function operatingPoint(iterations: number, seed: string): SearchConfig {
+  return withConfig({
+    iterations,
+    seed,
+    leaf: 'evaluate',
+    selection: 'puct',
+    puctExploration: 4,
+    puctDepth: 99,
+    normaliseValues: true,
+  });
+}
 
 /** The hand-written evaluation at the leaf. What generation zero played with, and the baseline since. */
 export const heuristicDeps: SplendorSearchDeps = {
