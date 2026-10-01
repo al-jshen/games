@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { explainSettings, explainSnapshot, looksLikeGamePage } from '../explain.mjs';
+import { explainSettings, explainSnapshot } from '../explain.mjs';
 
 /**
  * `capture` is run by someone trying to find out what BGA's page really holds, usually because the
@@ -80,17 +80,5 @@ describe('explainSettings', () => {
     const line = explainSettings(long).find((l) => l.startsWith('option 201'));
     expect(line.length).toBeLessThan(400);
     expect(line.endsWith('…')).toBe(true);
-  });
-});
-
-describe('looksLikeGamePage', () => {
-  it('tells the game itself from the table’s own page, which carries the same id', () => {
-    expect(looksLikeGamePage('https://boardgamearena.com/8/splendorduel?table=924592695')).toBe(true);
-    expect(looksLikeGamePage('https://en.boardgamearena.com/12/splendorduel/?table=1')).toBe(true);
-    // The address people most naturally copy.
-    expect(looksLikeGamePage('https://boardgamearena.com/tableview?table=924592695')).toBe(false);
-    expect(looksLikeGamePage('https://boardgamearena.com/table?table=924592695')).toBe(false);
-    expect(looksLikeGamePage('https://boardgamearena.com/gamepanel?game=splendorduel')).toBe(false);
-    expect(looksLikeGamePage('not a url')).toBe(false);
   });
 });

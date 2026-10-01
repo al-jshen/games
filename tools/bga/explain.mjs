@@ -45,18 +45,3 @@ export function explainSettings(info) {
     clip(`option 201 (assumed to be the game mode): ${mode === undefined ? 'absent' : JSON.stringify(mode)}`, 300),
   ];
 }
-
-/**
- * Whether a URL looks like the game itself rather than some other BGA page about the table.
- *
- * A game is served at `/<server number>/<game name>?table=…`. The table's own page
- * (`/tableview?table=…`, `/table?table=…`) carries the same table id and none of the game state,
- * and it is the address people most naturally copy.
- */
-export function looksLikeGamePage(url) {
-  try {
-    return /^\/\d+\/[a-z0-9]+\/?$/i.test(new URL(url).pathname);
-  } catch {
-    return false;
-  }
-}

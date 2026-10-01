@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playerIdsOf, sameTable, tableIdOf } from '../reader.mjs';
+import { isGameOf, playerIdsOf, sameTable, tableIdOf } from '../reader.mjs';
 
 /**
  * The guard vets one table. Everything after it must still be looking at that table, or the vetting
@@ -32,8 +32,33 @@ describe('sameTable', () => {
   });
 });
 
+/**
+ * Seen live on 2026-10-01: the browser shows `/tableview?table=…`, and the game is in a frame inside
+ * it at `/<server number>/splendorduel?table=…`, beside a blank frame of BGA's own. Only the game's
+ * frame has `gameui`, so it has to be told from the shell and from every other frame.
+ */
+describe('isGameOf', () => {
+  it('is true for the frame the table’s game runs in', () => {
+    expect(isGameOf('https://en.boardgamearena.com/16/splendorduel?table=924604189', '924604189')).toBe(true);
+    expect(isGameOf('https://boardgamearena.com/8/splendorduel/?table=924604189', '924604189')).toBe(true);
+  });
+
+  it('is false for the shell around it and for BGA’s other frames', () => {
+    expect(isGameOf('https://en.boardgamearena.com/tableview?table=924604189', '924604189')).toBe(false);
+    expect(isGameOf('https://boardgamearena.com/blank?gsgameurl=/splendorduel?table=924604189', '924604189')).toBe(false);
+    expect(isGameOf('chrome-error://chromewebdata/', '924604189')).toBe(false);
+    expect(isGameOf('not a url', '924604189')).toBe(false);
+  });
+
+  it('is false for another table, and for another game at this table’s id', () => {
+    expect(isGameOf('https://en.boardgamearena.com/16/splendorduel?table=1', '924604189')).toBe(false);
+    expect(isGameOf('https://en.boardgamearena.com/16/splendor?table=924604189', '924604189')).toBe(false);
+  });
+});
+
 describe('tableIdOf', () => {
-  it('reads the id from a game URL, and refuses one without', () => {
+  it('reads the id from a table’s URL in either form, and refuses one without', () => {
+    expect(tableIdOf('https://boardgamearena.com/tableview?table=123')).toBe('123');
     expect(tableIdOf('https://boardgamearena.com/1/splendorduel?table=123')).toBe('123');
     expect(() => tableIdOf('https://boardgamearena.com/1/splendorduel')).toThrow(/No table id/);
   });

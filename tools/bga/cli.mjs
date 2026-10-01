@@ -18,7 +18,7 @@ import { createInterface } from 'node:readline/promises';
 import { emptyMemory, parseSnapshot, stateKind } from '@games/bga-splendor-duel';
 import { makeAdvise } from './advise.mjs';
 import { openBrowser } from './browser.mjs';
-import { explainSettings, explainSnapshot, looksLikeGamePage } from './explain.mjs';
+import { explainSettings, explainSnapshot } from './explain.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
 import { runTable } from './loop.mjs';
 import { makePlay } from './play.mjs';
@@ -86,14 +86,6 @@ async function capture(flags) {
   const detail = (lines) => lines.forEach((line) => console.log(`         ${line}`));
 
   log(`table ${tableIdOf(url)}`);
-  if (!looksLikeGamePage(url)) {
-    log('NOTE: this does not look like the address of the game itself.');
-    detail([
-      'A game is at https://boardgamearena.com/<number>/splendorduel?table=…',
-      "A table's own page (/tableview?table=…) has the same id and none of the game state.",
-      'Carrying on anyway, in case BGA redirects it to the game.',
-    ]);
-  }
 
   const { context, tableId, table } = await open(url, { log });
   try {
