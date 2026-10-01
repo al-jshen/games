@@ -18,10 +18,10 @@ function must(state: SplendorState, action: SplendorAction): SplendorState {
   return result.state;
 }
 
-/** Every position of a game, in order. */
-function positions(seed: string, moves: number): SplendorState[] {
-  const out: SplendorState[] = [];
-  walk(seed, moves, (state) => out.push(state));
+/** Every position of a game, in order, with the position its turn's mandatory action was taken from. */
+function positions(seed: string, moves: number): [SplendorState, SplendorState | undefined][] {
+  const out: [SplendorState, SplendorState | undefined][] = [];
+  walk(seed, moves, (state, before) => out.push([state, before]));
   return out;
 }
 
@@ -54,15 +54,15 @@ describe('the turn baseline', () => {
     let memory = emptyMemory();
     let checked = 0;
     const all = positions('memory-baseline', 400);
-    all.forEach((state, i) => {
+    all.forEach(([state, turnStart], i) => {
       if (state.stage === 'over') return;
       const viewer = 0;
-      memory = remember(memory, snap(state, viewer));
+      memory = remember(memory, snap(state, viewer, turnStart));
       if (state.turn !== viewer || state.pending === null) return;
       // Walk back to the start of this turn: the last position where it was our optional stage.
       let start = i;
-      while (start > 0 && !(all[start]!.turn === viewer && all[start]!.stage === 'optional')) start -= 1;
-      const before = all[start]!.players[viewer];
+      while (start > 0 && !(all[start]![0].turn === viewer && all[start]![0].stage === 'optional')) start -= 1;
+      const before = all[start]![0].players[viewer];
       const owned = [...before.stacks.flatMap((s) => s.cardIds), ...before.colorless].sort();
       expect([...(memory.baseline?.cards ?? [])].sort()).toEqual(owned);
       expect([...(memory.baseline?.royals ?? [])].sort()).toEqual([...before.royals].sort());
@@ -77,9 +77,9 @@ describe('our own replenish', () => {
     let seen = 0;
     for (const viewer of [0, 1] as const) {
       let memory = emptyMemory();
-      walk('memory-replenish', 500, (state) => {
+      walk('memory-replenish', 500, (state, before) => {
         if (state.stage === 'over') return;
-        memory = remember(memory, snap(state, viewer));
+        memory = remember(memory, snap(state, viewer, before));
         if (state.turn !== viewer) return;
         expect(memory.replenished, `turn ${state.turn}, stage ${state.stage}`).toBe(state.replenishedThisTurn);
         if (state.replenishedThisTurn) seen += 1;
@@ -92,12 +92,12 @@ describe('our own replenish', () => {
   it('is not forgotten when the same position is looked at twice', () => {
     let memory = emptyMemory();
     let repeated = 0;
-    walk('memory-replenish', 500, (state) => {
+    walk('memory-replenish', 500, (state, before) => {
       if (state.stage === 'over') return;
-      memory = remember(memory, snap(state, 0));
+      memory = remember(memory, snap(state, 0, before));
       if (state.turn === 0 && state.replenishedThisTurn) {
         // A page reload, or the adapter restarting its loop, shows the identical snapshot again.
-        memory = remember(memory, snap(state, 0));
+        memory = remember(memory, snap(state, 0, before));
         expect(memory.replenished).toBe(true);
         repeated += 1;
       }

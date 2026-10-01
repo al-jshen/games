@@ -188,6 +188,16 @@ mandatory action exists (we have `pass`), and BGA's option to end the game again
 hoarding all gold and pearls (we have `maxTurnsWithoutPurchase`). Both are rare, and guessing in
 either would mean playing a move the search never considered.
 
+One known difference is handled rather than stopped on, because it is one of timing and not of
+position: BGA refills the table at the end of the turn (`refillCards` runs in `NextPlayer`), and
+our engine refills a slot as soon as its card is bought or reserved. So at every decision later in
+a turn that took a card from the table — a matching token, a steal, a royal, a discard — BGA shows
+that slot empty and that level's deck one card larger, with the card that will fill it face-down on
+top. `toView` reports exactly that, and the search samples its worlds with `determinizeBga`, which
+deals each such slot the next card of its sampled deck: an empty slot over a non-empty deck never
+occurs in our engine, so it can only mean "not refilled yet". A slot whose deck has run out stays
+empty, as it does on both sides.
+
 ## Measuring strength
 
 One JSON line per finished game in `data/bga/results.jsonl` (already ignored by git): table id,
@@ -207,7 +217,9 @@ estimate means little.
 - Card table: all 71 cards agree with BGA's definitions field by field.
 - Cells: the 25 positions map onto `SPIRAL`, and every legal line stays a legal line.
 - Round trip, as a property test over random playthroughs: our state → a synthetic `BgaSnapshot` →
-  `toView` must equal `redactFor` of the original, at every decision point.
+  `toView` must equal `redactFor` of the original, at every decision point — as BGA shows it at
+  that moment, with a slot taken from this turn still empty — and `determinizeBga` of that view must
+  give back the original position, up to which unseen card refills the slot.
 - Every `SplendorAction` the engine can produce has an instruction and a call sequence.
 - The refusals: each stop condition above has a fixture that triggers it.
 - `report`: recovers a known rating from simulated results.

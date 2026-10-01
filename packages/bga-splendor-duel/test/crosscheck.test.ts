@@ -27,10 +27,10 @@ describe('crossCheck', () => {
   it('finds nothing to object to in a whole game, except being stuck', () => {
     let checked = 0;
     const memory: [Memory, Memory] = [emptyMemory(), emptyMemory()];
-    walk('crosscheck', 400, (state) => {
+    walk('crosscheck', 400, (state, before) => {
       if (state.stage === 'over') return;
       for (const viewer of [0, 1] as const) {
-        const snapshot = snap(state, viewer);
+        const snapshot = snap(state, viewer, before);
         memory[viewer] = remember(memory[viewer], snapshot);
         if (state.turn !== viewer) continue;
         const { view, seat } = translated(snapshot, memory[viewer]);

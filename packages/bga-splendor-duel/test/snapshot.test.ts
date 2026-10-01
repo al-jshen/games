@@ -17,9 +17,9 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 describe('the snapshot schema', () => {
   it('accepts every position of a whole game, from either seat', () => {
     let checked = 0;
-    walk('snapshot-walk', 250, (state) => {
+    walk('snapshot-walk', 250, (state, before) => {
       for (const viewer of [0, 1] as const) {
-        const parsed = parseSnapshot(clone(synthSnapshot(state, viewer)));
+        const parsed = parseSnapshot(clone(synthSnapshot(state, viewer, { before })));
         expect(parsed.ok, parsed.ok ? '' : parsed.refusal.detail).toBe(true);
         checked += 1;
       }

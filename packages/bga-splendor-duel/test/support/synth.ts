@@ -136,13 +136,50 @@ function playerJson(state: SplendorState, seat: 0 | 1, viewer: 0 | 1) {
   };
 }
 
-export function synthSnapshot(
-  state: SplendorState,
-  viewer: 0 | 1,
-  override?: { name: string; args: unknown },
-): unknown {
-  const { name, args } = override ?? stateOf(state);
+/** A table slot our engine has already refilled and BGA has not, and the card it was refilled with. */
+export interface Unrefilled {
+  level: 1 | 2 | 3;
+  slot: number;
+  cardId: string;
+}
+
+/**
+ * The table slots BGA would still show empty at this position.
+ *
+ * BGA refills the table in `NextPlayer`, at the end of the turn; our engine refills a slot the
+ * moment its card is bought or reserved. So at every decision after this turn's mandatory action
+ * (`state.pending` set), a slot whose card has changed since `before` -- the position the mandatory
+ * action was taken from -- is, on BGA, still empty, with the card that will fill it face-down on top
+ * of its deck. A slot that emptied because its deck ran out is empty on both sides and is not listed:
+ * there is nothing to put back.
+ */
+export function unrefilled(state: SplendorState, before: SplendorState | undefined): Unrefilled[] {
+  if (!before || state.pending === null) return [];
+  const out: Unrefilled[] = [];
+  for (const level of [1, 2, 3] as const) {
+    state.pyramid[level].forEach((cardId, slot) => {
+      if (cardId !== null && cardId !== before.pyramid[level][slot]) out.push({ level, slot, cardId });
+    });
+  }
+  return out;
+}
+
+export interface SynthOptions {
+  /**
+   * The position this turn's mandatory action was taken from: the last position of this turn at
+   * stage `optional`. Given, the snapshot is shaped as BGA sends it mid-turn (see `unrefilled`).
+   */
+  before?: SplendorState;
+  /** A BGA state to report instead of the one `stateOf` gives, for the mid-action states. */
+  as?: { name: string; args: unknown };
+}
+
+export function synthSnapshot(state: SplendorState, viewer: 0 | 1, options: SynthOptions = {}): unknown {
+  const { name, args } = options.as ?? stateOf(state);
   const byLevel = <T>(make: (level: 1 | 2 | 3) => T) => ({ 1: make(1), 2: make(2), 3: make(3) });
+  const pending = unrefilled(state, options.before);
+  const held = (level: 1 | 2 | 3) => pending.filter((u) => u.level === level);
+  const deckCount = (level: 1 | 2 | 3) => state.decks[level].length + held(level).length;
   return {
     tableId: 'synthetic',
     me: PLAYER_ID[viewer],
@@ -158,13 +195,15 @@ export function synthSnapshot(
         const [row, column] = BGA_BOARD_COORDINATES[position - 1] as readonly [number, number];
         return [{ id: boardTokenId(cell), location: 'board', locationArg: position, type: color === 'gold' ? 1 : 2, color: colorToBga(color), row, column }];
       }),
-      cardDeckCount: byLevel((level) => state.decks[level].length),
+      cardDeckCount: byLevel(deckCount),
       cardDeckTop: byLevel((level) => {
-        const top = state.decks[level][0];
-        return top ? cardJson(top, `deck${level}`, state.decks[level].length, false) : null;
+        const top = held(level)[0]?.cardId ?? state.decks[level][0];
+        return top ? cardJson(top, `deck${level}`, deckCount(level), false) : null;
       }),
       tableCards: byLevel((level) =>
-        state.pyramid[level].flatMap((id, slot) => (id ? [cardJson(id, `table${level}`, slot + 1, true)] : [])),
+        state.pyramid[level].flatMap((id, slot) =>
+          id && !held(level).some((u) => u.slot === slot) ? [cardJson(id, `table${level}`, slot + 1, true)] : [],
+        ),
       ),
       royalCards: state.royals.flatMap((id, i) => (id ? [royalJson(id, 'deck', i)] : [])),
       expansion: false,
@@ -173,8 +212,8 @@ export function synthSnapshot(
 }
 
 /** `synthSnapshot`, through the schema, or a thrown error — for tests that are about something else. */
-export function snap(state: SplendorState, viewer: 0 | 1): BgaSnapshot {
-  const parsed = parseSnapshot(synthSnapshot(state, viewer));
+export function snap(state: SplendorState, viewer: 0 | 1, before?: SplendorState): BgaSnapshot {
+  const parsed = parseSnapshot(synthSnapshot(state, viewer, { before }));
   if (!parsed.ok) throw new Error(`synth produced a snapshot the schema refuses: ${parsed.refusal.detail}`);
   return parsed.snapshot;
 }

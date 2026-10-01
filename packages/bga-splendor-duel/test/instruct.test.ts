@@ -61,10 +61,10 @@ describe('instruct', () => {
     let said = 0;
     const memory: [Memory, Memory] = [emptyMemory(), emptyMemory()];
     const kinds = new Set<string>();
-    walk('instruct-walk', 400, (state) => {
+    walk('instruct-walk', 400, (state, before) => {
       if (state.stage === 'over') return;
       for (const viewer of [0, 1] as const) {
-        const snapshot = snap(state, viewer);
+        const snapshot = snap(state, viewer, before);
         memory[viewer] = remember(memory[viewer], snapshot);
         if (state.turn !== viewer) continue;
         const result = toView(snapshot, memory[viewer]);

@@ -4418,6 +4418,11 @@ Check, during the game:
 - after each of your clicks, the next instruction appears without prompting;
 - when the game ends, a row is appended to `data/bga/results.jsonl`, and `npm run bga -- report` counts it.
 
+And three checks of what the page reports, each with `capture` (it cannot share the browser profile with a running `advise`, so do these on a friendly table you play by hand):
+- **mid-turn, right after a purchase from the table** that leaves a decision in the same turn (a matching token, a steal, a royal or a discard): the capture's `raw` must show that card's table slot **empty**, that level's `cardDeckCount` one **larger** than before the purchase, and `cardDeckTop` face-down. This is BGA refilling at the end of the turn, which `toView` and `determinizeBga` rely on (spec, "When it stops"). If the slot is already refilled, `test/support/synth.ts` (`unrefilled`) and the spec are wrong about BGA and must be corrected before `play` is trusted;
+- **after the game has ended**, a capture (a reload) must still yield the game state, with the winner's `score` at 1 and `endReasons` filled in — the result row is read from that snapshot;
+- **the table id**: the URL the page is on after loading must carry `?table=<id>` with the id you passed. The adapter refuses to go on if the page's own `table` parameter ever differs from the table it vetted (`sameTable` in `reader.mjs`), so if BGA rewrites the URL some other way, that check must be corrected first.
+
 Every stop saves its snapshot under `data/bga/stops/`. For each one, decide whether it was right to stop; if it was a translation bug, sanitise the snapshot into `test/fixtures/live/`, watch `live.test.ts` fail, and fix it.
 
 - [ ] **Step 9: Commit**

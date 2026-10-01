@@ -9,6 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { determinizeBga } from '@games/bga-splendor-duel';
 import { search } from '@games/bot-ismcts';
 import { netDeps, operatingPoint } from '@games/bot-splendor-duel';
 import { loadNet } from '../selfplay/net.mjs';
@@ -32,8 +33,12 @@ export function loadPublished(base) {
  * one object across a tree walk is the kind of aliasing that produces a bug nobody can reproduce.
  */
 export function makeBrain(engine, iterations, seed) {
+  // BGA refills the table at the end of the turn, so mid-turn a view read from it has an empty slot
+  // over a non-empty deck. Every sampled world gets that slot dealt, as BGA will deal it, so the
+  // search plans with the table the next turn will really have (see `determinizeBga`).
+  const deps = { ...engine.deps, determinize: determinizeBga };
   return (view, seat, move) => {
-    const result = search(engine.deps, structuredClone(view), seat, operatingPoint(iterations, `${seed}:${move}`));
+    const result = search(deps, structuredClone(view), seat, operatingPoint(iterations, `${seed}:${move}`));
     return { action: result.action, value: result.rootValue };
   };
 }

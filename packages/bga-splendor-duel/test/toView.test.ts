@@ -1,5 +1,4 @@
 import {
-  GEM_COLORS,
   apply,
   legalActions,
   legalActionsFromView,
@@ -12,59 +11,54 @@ import { describe, expect, it } from 'vitest';
 import { emptyMemory, remember, type Memory } from '../src/memory.js';
 import { parseSnapshot } from '../src/snapshot.js';
 import { toView } from '../src/toView.js';
-import { PLAYER_ID, snap, synthSnapshot } from './support/synth.js';
+import { PLAYER_ID, snap, synthSnapshot, unrefilled } from './support/synth.js';
 import { walk } from './support/play.js';
+import { canonical } from './support/canonical.js';
+
+/**
+ * Our own redaction, as BGA would show it at this moment.
+ *
+ * BGA refills the table at the end of the turn and our engine at once, so after a purchase or
+ * reservation from the table, every later decision of the same turn sees that slot empty on BGA and
+ * its deck one card larger (see `unrefilled`). That is a difference of timing, not of position, and
+ * `determinizeBga` closes it before the search; the translation itself reports what BGA shows.
+ */
+function viewOf(state: SplendorState, seat: 0 | 1, before: SplendorState | undefined): SplendorView {
+  const view = JSON.parse(JSON.stringify(redactFor(seat, state))) as SplendorView;
+  for (const { level, slot } of unrefilled(state, before)) {
+    view.pyramid[level][slot] = null;
+    view.decks[level] += 1;
+  }
+  return view;
+}
 
 /**
  * The whole contract in one property.
  *
  * Play a game in our engine. At every decision, dress the position up as BGA would send it to the
  * player deciding, translate that back, and the result has to be the view our own redaction gives
- * that player. If it is, the bot on BGA is looking at the same thing the bot in the arena looked at
- * — which is the only reason to believe a number measured there says anything about a game here.
- *
- * "The same" modulo four things that are orderings rather than facts, and two fields BGA has no
- * counterpart for and the network never sees. `canonical` is the complete list.
+ * that player -- as BGA shows it at that moment (`viewOf`). If it is, the bot on BGA is looking at
+ * the same thing the bot in the arena looked at — which is the only reason to believe a number
+ * measured there says anything about a game here. "The same" is up to `canonical`.
  */
-function canonical(view: SplendorView): unknown {
-  const royals = view.royals.filter((r): r is string => r !== null).sort();
-  return {
-    ...view,
-    // No stall rule on BGA, and neither field is an input to the encoder or to legality.
-    options: {},
-    turnsWithoutPurchase: 0,
-    // Which table slot a royal sits in is arbitrary on both sides.
-    royals: [...royals, ...new Array<null>(4 - royals.length).fill(null)],
-    players: view.players.map((p) => ({
-      ...p,
-      stacks: [...p.stacks].sort((a, b) => GEM_COLORS.indexOf(a.color) - GEM_COLORS.indexOf(b.color)),
-      reserved: [...p.reserved].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-      royals: [...p.royals].sort(),
-      colorless: [...p.colorless].sort(),
-    })),
-  };
-}
-
-const viewOf = (state: SplendorState, seat: 0 | 1): SplendorView =>
-  JSON.parse(JSON.stringify(redactFor(seat, state))) as SplendorView;
-
 describe('toView', () => {
   it('gives back exactly the view our own redaction produces, at every decision of a game', () => {
     const pendingSeen = new Set<string>();
     let checked = 0;
+    let unrefilledSeen = 0;
     for (const seed of ['toview-a', 'toview-b', 'toview-c']) {
       const memory: [Memory, Memory] = [emptyMemory(), emptyMemory()];
-      walk(seed, 400, (state) => {
+      walk(seed, 400, (state, before) => {
         if (state.stage === 'over') return;
         for (const viewer of [0, 1] as const) {
-          const snapshot = snap(state, viewer);
+          const snapshot = snap(state, viewer, before);
           memory[viewer] = remember(memory[viewer], snapshot);
           if (state.turn !== viewer) continue;
 
           const result = toView(snapshot, memory[viewer]);
           expect(result.ok, result.ok ? '' : `${result.refusal.reason}: ${result.refusal.detail}`).toBe(true);
           if (!result.ok) return;
-          const expected = viewOf(state, viewer);
+          const expected = viewOf(state, viewer, before);
           expect(result.seat).toBe(viewer);
           expect(canonical(result.view)).toEqual(canonical(expected));
           expect(result.warnings).toEqual([]);
@@ -74,11 +68,14 @@ describe('toView', () => {
             legalActionsFromView(view, viewer).actions.map((a) => JSON.stringify(a)).sort();
           expect(moves(result.view)).toEqual(moves(expected));
           pendingSeen.add(state.pending?.k ?? 'none');
+          if (unrefilled(state, before).length > 0) unrefilledSeen += 1;
           checked += 1;
         }
       });
     }
     expect(checked).toBeGreaterThan(300);
+    // And the timing difference was exercised, not just allowed for.
+    expect(unrefilledSeen).toBeGreaterThan(5);
     // The property is only as good as the states it visited.
     for (const kind of ['none', 'discard', 'royal', 'matchingToken', 'steal']) {
       expect(pendingSeen.has(kind), `no position with pending "${kind}" was reached; add a seed`).toBe(true);
