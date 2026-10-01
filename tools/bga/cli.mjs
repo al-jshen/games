@@ -17,6 +17,7 @@ import { createInterface } from 'node:readline/promises';
 import { emptyMemory, parseSnapshot, stateKind } from '@games/bga-splendor-duel';
 import { makeAdvise } from './advise.mjs';
 import { openBrowser } from './browser.mjs';
+import { explainSettings, explainSnapshot, looksLikeGamePage } from './explain.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
 import { runTable } from './loop.mjs';
 import { makePlay } from './play.mjs';
@@ -51,12 +52,15 @@ function save(folder, name, value) {
   return file;
 }
 
-async function open(url) {
+async function open(url, { log = () => {} } = {}) {
   const tableId = tableIdOf(url);
+  log(`opening a browser with the saved profile (${PROFILE})`);
   const context = await openBrowser(PROFILE);
   const page = context.pages()[0] ?? (await context.newPage());
+  log(`loading ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  return { context, tableId, table: makeTable(page, tableId) };
+  log(`the browser is on ${page.url()}, titled "${await page.title().catch(() => '?')}"`);
+  return { context, tableId, table: makeTable(page, tableId, { log }) };
 }
 
 async function login() {
@@ -68,9 +72,28 @@ async function login() {
   await new Promise((resolve) => context.on('close', resolve));
 }
 
+/**
+ * `capture` narrates itself. It is run by someone finding out what BGA's page really holds, usually
+ * because something did not read as expected, and a tool that says nothing for a minute and then
+ * prints three lines leaves them guessing which step went wrong.
+ */
 async function capture(flags) {
   const url = need(flags, 'table');
-  const { context, tableId, table } = await open(url);
+  const started = Date.now();
+  const log = (line) => console.log(`[${((Date.now() - started) / 1000).toFixed(1).padStart(5)}s] ${line}`);
+  const detail = (lines) => lines.forEach((line) => console.log(`         ${line}`));
+
+  log(`table ${tableIdOf(url)}`);
+  if (!looksLikeGamePage(url)) {
+    log('NOTE: this does not look like the address of the game itself.');
+    detail([
+      'A game is at https://boardgamearena.com/<number>/splendorduel?table=…',
+      "A table's own page (/tableview?table=…) has the same id and none of the game state.",
+      'Carrying on anyway, in case BGA redirects it to the game.',
+    ]);
+  }
+
+  const { context, tableId, table } = await open(url, { log });
   try {
     // A capture is for finding out what the page really holds, so a part that fails is recorded and
     // the rest still taken: a refused snapshot still has ratings, a page that would not load still
@@ -79,13 +102,25 @@ async function capture(flags) {
     let error = null;
     try {
       raw = await table.snapshot();
+      detail(explainSnapshot(raw));
     } catch (thrown) {
       error = thrown instanceof Error ? thrown.message : String(thrown);
+      log(`the game state could NOT be read: ${error}`);
     }
     const parsed = raw === null ? null : parseSnapshot(raw);
+    if (parsed) log(parsed.ok ? 'checked against the schema: it matches' : `checked against the schema: REFUSED. ${parsed.refusal.detail}`);
+
     const playerIds = parsed?.ok ? Object.values(parsed.snapshot.gamedatas.players).map((p) => p.id) : playerIdsOf(raw);
-    const facts = await table.facts(playerIds).catch(() => ({ info: null, ratings: {} }));
+    const facts = await table.facts(playerIds).catch((thrown) => {
+      log(`asking for settings and ratings failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`);
+      return { info: null, ratings: {} };
+    });
+    detail(explainSettings(facts.info));
+    detail([`ratings: ${JSON.stringify(facts.ratings)}`]);
+
     const primitives = await table.primitives().catch((thrown) => ({ error: thrown instanceof Error ? thrown.message : String(thrown) }));
+    detail([`${Object.keys(primitives).length} value(s) recorded`]);
+
     const schema = error ? `NOT READ: ${error}` : parsed.ok ? 'accepted' : parsed.refusal.detail;
     const file = save('captures', `${tableId}-${stamp()}.json`, {
       url,
@@ -97,7 +132,8 @@ async function capture(flags) {
       ratings: facts.ratings,
       primitives,
     });
-    console.log(`Saved ${file}`);
+    log('done; closing the browser');
+    console.log(`\nSaved ${file}`);
     console.log(`  snapshot: ${error ? `NOT READ: ${error}` : parsed.ok ? 'matches the schema' : `REFUSED: ${parsed.refusal.detail}`}`);
     console.log(`  game mode as read: ${tableMode(facts.info)}   (table settings ${facts.info ? 'received' : 'NOT received'})`);
     console.log(`  ratings as read: ${JSON.stringify(facts.ratings)}`);

@@ -68,7 +68,13 @@ async function ready(page) {
       { timeout: 60_000 },
     );
   } catch {
-    throw new Error('This page did not become a Splendor Duel game within a minute. Is the URL a game in progress, and is the browser signed in (`npm run bga -- login`)?');
+    // Say where the browser actually is: the commonest cause is a URL that is about the table but
+    // is not the game -- the table's own page carries the same id and none of the game state.
+    throw new Error(
+      `The page at ${page.url()} did not become a Splendor Duel game within a minute. ` +
+        'Is that the game itself (https://boardgamearena.com/<number>/splendorduel?table=…) and not the table\'s page, ' +
+        'is the game in progress, and is the browser signed in (`npm run bga -- login`)?',
+    );
   }
 }
 
@@ -102,13 +108,20 @@ function readPulse(page) {
   });
 }
 
-export function makeTable(page, tableId) {
+/**
+ * `log`, when given, is told each thing done to the page as it is done. `capture` passes one, so
+ * the person calibrating can watch; `advise` and `play` do not, and stay quiet.
+ */
+export function makeTable(page, tableId, { log = () => {} } = {}) {
   return {
     /** A full, current snapshot. Reloads the page. */
     async snapshot() {
+      log('reloading the page');
       await page.reload({ waitUntil: 'domcontentloaded' });
+      log('waiting for the game to finish loading (gameui, its game state, and the board), up to a minute');
       await ready(page);
       stillOn(page, tableId);
+      log('reading the game state the page was given (gameui.gamedatas)');
       return readRaw(page, tableId);
     },
 
@@ -187,6 +200,7 @@ export function makeTable(page, tableId) {
      * answer as expected, and `null` is a refusal (mode) or a game left out of the report (rating).
      */
     async facts(playerIds) {
+      log("asking BGA for the table's settings (tableinfos, through the page's own ajaxcall), up to 10s");
       const info = await page.evaluate(
         (id) =>
           new Promise((resolve) => {
@@ -202,6 +216,7 @@ export function makeTable(page, tableId) {
           }),
         tableId,
       );
+      log(`reading ratings from the player panels (#player_elo_<id>) for ${playerIds.length > 0 ? playerIds.join(', ') : 'no players'}`);
       const ratings = await page.evaluate(
         (ids) =>
           Object.fromEntries(
@@ -218,6 +233,7 @@ export function makeTable(page, tableId) {
 
     /** Every plain value on `gameui`, for calibration. Anything that looks like a credential is left out. */
     async primitives() {
+      log('listing the plain values on gameui (credential-looking names left out)');
       return page.evaluate(() =>
         Object.fromEntries(
           Object.entries(gameui).filter(

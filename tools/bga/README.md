@@ -86,7 +86,10 @@ be wrong. Task 11 of `docs/superpowers/plans/2026-09-30-bga-adapter.md` is the p
 step. In short:
 
 1. `npm run bga -- login`, then `capture` a friendly table you are seated at and a rated game you
-   are only watching. `capture` only reads; it is safe on any table.
+   are only watching. `capture` only reads; it is safe on any table. Give it the address of the game
+   itself (`https://boardgamearena.com/<number>/splendorduel?table=…`), not the table's own page
+   (`/tableview?table=…`), which has the same id and none of the game state. It says what it is
+   doing at each step, so a capture that reads nothing also says where it stopped.
 2. The friendly capture must say `snapshot: matches the schema`, and the two must say
    `game mode as read: friendly` and `rated`. If not, the saved files under `data/bga/captures/`
    show what BGA really sends; fix `tableMode` (and `facts` in `reader.mjs`) until both read
