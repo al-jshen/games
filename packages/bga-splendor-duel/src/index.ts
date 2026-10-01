@@ -9,3 +9,4 @@ export * from './crosscheck.js';
 export * from './instruct.js';
 export * from './toBgaCalls.js';
 export * from './determinizeBga.js';
+export * from './spectate.js';

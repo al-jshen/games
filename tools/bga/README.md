@@ -1,12 +1,13 @@
 # Playing on BoardGameArena
 
 The published network, at a Splendor Duel table on boardgamearena.com, so that its strength can be
-measured against people. Two modes:
+measured against people. Two modes for a table you are seated at, and one for a table you are not:
 
 | | |
 | --- | --- |
 | `advise` | Reads the position, searches, and tells you what to click. You make every move. |
 | `play` | The same, and makes the moves itself. |
+| `watch` | A game you are **not** in. Says what the bot would play for whoever is to move. Read-only. |
 
 ```bash
 npx playwright install chromium        # once
@@ -14,6 +15,7 @@ npm run typecheck                      # once after pulling: the tool imports th
 npm run bga -- login                   # once: sign in to BGA by hand in the window that opens
 npm run bga -- advise --table 'https://boardgamearena.com/1/splendorduel?table=123456789'
 npm run bga -- play   --table '…' --iterations 1000
+npm run bga -- watch  --table '…'      # any game you are only spectating
 npm run bga -- report
 ```
 
@@ -41,6 +43,25 @@ These are enforced in code, and they are the reason this exists in the form it d
 
 BGA has not approved this, and its terms prohibit analysing its code and protocols, which reading a
 page's state is. The risk to the account is the account holder's.
+
+## Watching
+
+`watch` is for a game the logged-in account is not playing in, in any mode — friendly, normal or
+arena. It sends nothing to the table, so none of the conditions above apply to it, and it needs
+neither calibration switch. Its one rule is the mirror of theirs: it refuses a table you are seated
+at. Your own seat goes through `advise`, and its guard.
+
+For every decision by either player it prints what the bot would play in that seat, and outlines the
+pieces on the page, while the position is still on the table. Two things to know when reading it:
+
+- **It sees what a spectator sees.** BGA shows an onlooker neither player's face-down reservations,
+  so the suggestion is what the bot would play knowing only what is public. When it would buy one of
+  the mover's face-down cards it says so without naming a card, because it cannot know which.
+- **It does not stop.** A position it cannot translate, or one where our rules and BGA's disagree,
+  is reported in a line and skipped. Those lines are the cheapest way there is to find translation
+  bugs: every game on BGA is a test of the read path, with nobody needing to play the bot.
+
+Nothing is recorded in the results log: a watched game is not a game the network played.
 
 ## When it stops
 

@@ -23,6 +23,10 @@ import { parseSnapshot, type BgaSnapshot } from '../../src/snapshot.js';
  */
 
 export const PLAYER_ID: readonly [number, number] = [1000, 2000];
+/** The account looking on when nobody at the table is us. */
+export const SPECTATOR_ID = 999;
+/** Whose eyes a synthetic snapshot is seen through: a seat, or `null` for someone only watching. */
+export type Viewer = 0 | 1 | null;
 
 const JEWELS = CARD_DEFS.filter((c) => c.kind === 'jewel').map((c) => c.id);
 const ROYALS = CARD_DEFS.filter((c) => c.kind === 'royal').map((c) => c.id);
@@ -103,7 +107,7 @@ export function stateOf(state: SplendorState): { name: string; args: unknown } {
   };
 }
 
-function playerJson(state: SplendorState, seat: 0 | 1, viewer: 0 | 1) {
+function playerJson(state: SplendorState, seat: 0 | 1, viewer: Viewer) {
   const player = state.players[seat];
   const pid = PLAYER_ID[seat];
   const tokens = TOKEN_COLORS.flatMap((color) =>
@@ -130,6 +134,7 @@ function playerJson(state: SplendorState, seat: 0 | 1, viewer: 0 | 1) {
     tokens,
     cards,
     // `Card::onlyIds`: an opponent's reservation has no face, whether or not it was taken face-up.
+    // A spectator is everybody's opponent, and is shown no reservation's face at all.
     reserved: player.reserved.map((held) => cardJson(held.cardId, 'reserved', pid, seat === viewer)),
     royalCards: player.royals.map((id) => royalJson(id, 'player', pid)),
     endReasons: [],
@@ -174,7 +179,7 @@ export interface SynthOptions {
   as?: { name: string; args: unknown };
 }
 
-export function synthSnapshot(state: SplendorState, viewer: 0 | 1, options: SynthOptions = {}): unknown {
+export function synthSnapshot(state: SplendorState, viewer: Viewer, options: SynthOptions = {}): unknown {
   const { name, args } = options.as ?? stateOf(state);
   const byLevel = <T>(make: (level: 1 | 2 | 3) => T) => ({ 1: make(1), 2: make(2), 3: make(3) });
   const pending = unrefilled(state, options.before);
@@ -182,7 +187,7 @@ export function synthSnapshot(state: SplendorState, viewer: 0 | 1, options: Synt
   const deckCount = (level: 1 | 2 | 3) => state.decks[level].length + held(level).length;
   return {
     tableId: 'synthetic',
-    me: PLAYER_ID[viewer],
+    me: viewer === null ? SPECTATOR_ID : PLAYER_ID[viewer],
     gamestate: { name, active_player: String(PLAYER_ID[state.turn as 0 | 1]), args },
     gamedatas: {
       players: {
@@ -212,7 +217,7 @@ export function synthSnapshot(state: SplendorState, viewer: 0 | 1, options: Synt
 }
 
 /** `synthSnapshot`, through the schema, or a thrown error — for tests that are about something else. */
-export function snap(state: SplendorState, viewer: 0 | 1, before?: SplendorState): BgaSnapshot {
+export function snap(state: SplendorState, viewer: Viewer, before?: SplendorState): BgaSnapshot {
   const parsed = parseSnapshot(synthSnapshot(state, viewer, { before }));
   if (!parsed.ok) throw new Error(`synth produced a snapshot the schema refuses: ${parsed.refusal.detail}`);
   return parsed.snapshot;

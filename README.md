@@ -80,6 +80,7 @@ instead — the same code without a socket runs at ~90,000 moves/sec. `npm run b
 
 ```bash
 npm run bga -- advise --table '<a friendly-mode game URL>'    # it tells you what to click
+npm run bga -- watch  --table '<a game you are spectating>'   # what the bot would play, for either player
 npm run bga -- report                                         # the rating the games so far support
 ```
 

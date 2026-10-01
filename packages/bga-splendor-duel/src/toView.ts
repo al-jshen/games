@@ -72,12 +72,25 @@ function stop(reason: RefusalReason, detail: string): never {
   throw new Stop({ reason, detail });
 }
 
-export function toView(snapshot: BgaSnapshot, memory: Memory): ToViewResult {
+export interface ToViewOptions {
+  /**
+   * The snapshot is a spectator's, moved to this seat with `asSeat`.
+   *
+   * A spectator is shown no reservation's face, the mover's included. So the seat's own unseen
+   * reservations are hidden in the view, exactly as an opponent's are, and the view is what the
+   * player to move could be said to know as far as an onlooker can tell. Without this, a seat's own
+   * reservation arriving faceless is a refusal: for a seated account it means the page is not what
+   * we think it is.
+   */
+  spectating?: boolean;
+}
+
+export function toView(snapshot: BgaSnapshot, memory: Memory, options: ToViewOptions = {}): ToViewResult {
   if (!memory.prev || !sameSummary(memory.prev, summarise(snapshot))) {
     throw new Error('toView: call remember(memory, snapshot) with this snapshot first');
   }
   try {
-    return { ok: true, ...translate(snapshot, memory) };
+    return { ok: true, ...translate(snapshot, memory, options.spectating === true) };
   } catch (error) {
     if (error instanceof Stop) return { ok: false, refusal: error.refusal };
     throw error;
@@ -275,7 +288,7 @@ function turnFacts(snapshot: BgaSnapshot, mine: PlayerView, memory: Memory, warn
   }
 }
 
-function translate(snapshot: BgaSnapshot, memory: Memory): Translation {
+function translate(snapshot: BgaSnapshot, memory: Memory, spectating: boolean): Translation {
   const { gamedatas, gamestate } = snapshot;
   if (gamedatas.expansion) stop('expansion', 'The Counterfeiters expansion is enabled on this table.');
 
@@ -291,7 +304,9 @@ function translate(snapshot: BgaSnapshot, memory: Memory): Translation {
   const theirs = players.find((p) => p.id !== snapshot.me) ?? stop('bad-snapshot', 'No opponent at this table.');
   if (gamestate.active_player !== mine.id) stop('not-our-turn', 'It is not our seat that is to act.');
 
-  const me = buildPlayer(mine, true, memory);
+  // `mine` in the sense of "every reservation here has its face": true of our own seat, and of no
+  // seat at all when we are only watching.
+  const me = buildPlayer(mine, !spectating, memory);
   const them = buildPlayer(theirs, false, memory);
   if (me.seat === them.seat) stop('bad-snapshot', 'Both players report the same turn order.');
   const seat = me.seat as 0 | 1;

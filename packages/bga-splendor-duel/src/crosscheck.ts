@@ -19,7 +19,16 @@ import { buyableIds, zPlayActionArgs, type BgaSnapshot } from './snapshot.js';
  * which BGA has no move for), and BGA's option to end the game against a player hoarding every gold
  * and pearl.
  */
-export function crossCheck(view: SplendorView, seat: 0 | 1, snapshot: BgaSnapshot): string[] {
+export interface CrossCheckOptions {
+  /**
+   * The view is a spectator's (see `asSeat`). BGA's list of affordable cards names the mover's
+   * reservations by id, and a spectator has no face for those, so the comparison of what can be
+   * bought is held to the cards on the table, which both sides can name.
+   */
+  spectating?: boolean;
+}
+
+export function crossCheck(view: SplendorView, seat: 0 | 1, snapshot: BgaSnapshot, options: CrossCheckOptions = {}): string[] {
   const problems: string[] = [];
   const { actions } = legalActionsFromView(view, seat);
 
@@ -72,15 +81,21 @@ export function crossCheck(view: SplendorView, seat: 0 | 1, snapshot: BgaSnapsho
 
   // The sharpest check there is: the exact set of affordable cards depends on every token we hold,
   // every bonus we own, every cost, and every card id being mapped correctly.
+  const tableOnly = options.spectating === true;
   const ours = new Set<string>();
   for (const action of actions) {
     if (action.t !== 'purchase') continue;
+    if (tableOnly && action.from.t !== 'pyramid') continue;
     const id = action.from.t === 'pyramid' ? view.pyramid[action.from.level][action.from.slot] : action.from.cardId;
     if (id) ours.add(id);
   }
   const at = locate(snapshot);
   const theirs = new Set<string>();
-  for (const bga of buyableIds(args)) theirs.add(at.ourCardId.get(bga) ?? `BGA card ${bga}`);
+  const onTable = new Set([1, 2, 3].flatMap((level) => snapshot.gamedatas.tableCards[level as 1 | 2 | 3].map((held) => held.id)));
+  for (const bga of buyableIds(args)) {
+    if (tableOnly && !onTable.has(bga)) continue;
+    theirs.add(at.ourCardId.get(bga) ?? `BGA card ${bga}`);
+  }
   const onlyOurs = [...ours].filter((id) => !theirs.has(id)).sort();
   const onlyTheirs = [...theirs].filter((id) => !ours.has(id)).sort();
   if (onlyOurs.length > 0) problems.push(`We think we can afford ${onlyOurs.join(', ')}; BGA does not.`);

@@ -6,6 +6,7 @@
  *   npm run bga -- capture --table <url>                    save what the adapter sees; changes nothing
  *   npm run bga -- advise  --table <url> [--iterations N]   tell the operator what to play
  *   npm run bga -- play    --table <url> [--iterations N]   play the moves itself
+ *   npm run bga -- watch   --table <url> [--iterations N]   a game you are not in: what the bot would play
  *   npm run bga -- report                                   the rating the results so far support
  *
  * See README.md beside this file for the conditions this is used under. They are not optional.
@@ -25,6 +26,7 @@ import { guard, playAllowed, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, playerIdsOf, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
+import { watchTable } from './watch.mjs';
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -292,6 +294,42 @@ function play(flags) {
   });
 }
 
+/**
+ * A game the logged-in account is not in, with the bot's suggestion for whoever is to move.
+ *
+ * No guard, no notice, no result row: nothing is sent to the table and nobody at it is ours. The
+ * one refusal is `watchTable`'s own -- a table we are seated at is not one to watch.
+ */
+async function watch(flags) {
+  const url = need(flags, 'table');
+  const iterations = iterationsOf(flags);
+  const engine = loadPublished(PUBLISHED);
+  const { context, tableId, table } = await open(url);
+  try {
+    console.log(`Watching table ${tableId}. Suggestions are generation ${engine.generation} at ${iterations} iterations,`);
+    console.log('made from what a spectator can see: neither player\'s face-down reservations are known.\n');
+    const result = await watchTable({
+      table,
+      brain: makeBrain(engine, iterations, tableId),
+      present: async ({ seat, playerId, text, steps, highlight, value }) => {
+        console.log(`\n▶ seat ${seat + 1} (player ${playerId}) to move. The bot would play: ${text}    (search value ${signed(value)})`);
+        steps.forEach((step) => console.log(`     ${step}`));
+        await table.show(highlight);
+      },
+      say: (line) => console.log(line),
+      sleep,
+    });
+    if (result.outcome === 'refused') {
+      console.error(`Not watching this table. ${result.why}`);
+      process.exitCode = 2;
+    } else {
+      console.log(`\nThe game is over. ${result.suggestions} position(s) looked at.`);
+    }
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -303,10 +341,12 @@ async function main() {
       return advise(flags);
     case 'play':
       return play(flags);
+    case 'watch':
+      return watch(flags);
     case 'report':
       return console.log(report(readResults(RESULTS)));
     default:
-      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | play --table <url> [--iterations N] | report>');
+      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | play --table <url> [--iterations N] | watch --table <url> [--iterations N] | report>');
       process.exitCode = command ? 2 : 0;
   }
 }

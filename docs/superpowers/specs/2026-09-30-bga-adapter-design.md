@@ -13,6 +13,15 @@ Two ways of getting its moves onto the table, sharing everything except the last
   play. The operator clicks. Nothing is ever submitted by the program.
 - **`play`** — the same, except the adapter submits the move itself.
 
+A third mode, added after the first two, is for a table the logged-in account is **not** at:
+
+- **`watch`** — read-only. For each decision by either player, it says what the bot would play in
+  that seat, from what a spectator is shown. It sends nothing, so the conditions of use below do
+  not apply to it and it works in any game mode; its one refusal is a table we are seated at.
+  It is translated from the mover's seat with that seat's own face-down reservations hidden, like
+  an opponent's (`asSeat`, and `spectating` in `toView` and `crossCheck`). Nothing it sees is
+  recorded as a result.
+
 `advise` is the robust one and is built first. It has no write path to break, and every decision
 starts from a fresh snapshot, so it does not care whether the last move was the one it suggested.
 `play` adds only the translation from our action to BGA's calls, on top of a read path that `advise`

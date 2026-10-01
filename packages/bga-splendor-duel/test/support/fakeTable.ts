@@ -14,7 +14,7 @@ import {
 } from '@games/splendor-duel';
 import { gemFromBga } from '../../src/ids.js';
 import { pick } from './play.js';
-import { PLAYER_ID, cardIdOfBga, heldTokenColor, royalIdOfBga, stateOf, synthSnapshot } from './synth.js';
+import { PLAYER_ID, cardIdOfBga, heldTokenColor, royalIdOfBga, stateOf, synthSnapshot, type Viewer } from './synth.js';
 
 /**
  * A BGA table, as far as the adapter can tell: something that can be pulsed, snapshotted, and sent
@@ -49,9 +49,10 @@ export class FakeTable {
   private turnStart: SplendorState;
   private readonly rng: RandomCursor;
 
+  /** `viewer` is our seat, or `null` for a table we are only watching: then both seats play themselves. */
   constructor(
     seed: string,
-    readonly viewer: 0 | 1,
+    readonly viewer: Viewer,
   ) {
     this.state = setup({ seed, seats: [0, 1], options: {} });
     this.turnStart = this.state;
@@ -82,9 +83,14 @@ export class FakeTable {
     return JSON.parse(JSON.stringify(synthSnapshot(this.state, this.viewer, { as, before: this.turnStart })));
   }
 
+  private seat(): 0 | 1 {
+    if (this.viewer === null) throw new Error('FakeTable: nobody at this table is ours, so nothing can be played from here');
+    return this.viewer;
+  }
+
   /** The operator, doing as advised. */
   play(action: SplendorAction): void {
-    this.force(this.viewer, action);
+    this.force(this.seat(), action);
   }
 
   force(seat: 0 | 1, action: SplendorAction): void {
@@ -96,7 +102,7 @@ export class FakeTable {
 
   /** One of BGA's action calls, from the viewer's seat. */
   async perform(call: FakeCall): Promise<void> {
-    const seat = this.viewer;
+    const seat = this.seat();
     if (this.state.turn !== seat || this.state.stage === 'over') throw new Error('It is not your turn');
     const ids = (value: string | number | undefined): number[] =>
       String(value ?? '').split(',').filter((part) => part !== '').map(Number);
