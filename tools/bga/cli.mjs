@@ -7,6 +7,8 @@
  *   npm run bga -- advise  --table <url> [--iterations N]   tell the operator what to play
  *   npm run bga -- play    --table <url> [--iterations N]   play the moves itself
  *   npm run bga -- watch   --table <url> [--iterations N]   a game you are not in: what the bot would play
+ *
+ * `capture` and `watch` only read, and take `--headless` to run with no window.
  *   npm run bga -- report                                   the rating the results so far support
  *
  * See README.md beside this file for the conditions this is used under. They are not optional.
@@ -17,6 +19,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { emptyMemory, parseSnapshot, stateKind } from '@games/bga-splendor-duel';
 import { makeAdvise } from './advise.mjs';
+import { headlessAllowed, parseArgs } from './args.mjs';
 import { openBrowser } from './browser.mjs';
 import { explainSettings, explainSnapshot } from './explain.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
@@ -27,17 +30,6 @@ import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, playerIdsOf, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
 import { watchTable, whoIs } from './watch.mjs';
-
-function parseArgs(argv) {
-  const [command, ...rest] = argv;
-  const flags = {};
-  for (let i = 0; i < rest.length; i += 2) {
-    const name = rest[i];
-    if (!name?.startsWith('--') || rest[i + 1] === undefined) throw new Error(`Expected "--name value", got "${rest.slice(i).join(' ')}".`);
-    flags[name.slice(2)] = rest[i + 1];
-  }
-  return { command, flags };
-}
 
 function need(flags, name) {
   if (!flags[name]) throw new Error(`Missing --${name}.`);
@@ -54,10 +46,10 @@ function save(folder, name, value) {
   return file;
 }
 
-async function open(url, { log = () => {} } = {}) {
+async function open(url, { log = () => {}, headless = false } = {}) {
   const tableId = tableIdOf(url);
-  log(`opening a browser with the saved profile (${PROFILE})`);
-  const context = await openBrowser(PROFILE);
+  log(`opening a browser with the saved profile (${PROFILE})${headless ? ', with no window' : ''}`);
+  const context = await openBrowser(PROFILE, { headless });
   const page = context.pages()[0] ?? (await context.newPage());
   log(`loading ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -87,7 +79,7 @@ async function capture(flags) {
 
   log(`table ${tableIdOf(url)}`);
 
-  const { context, tableId, table } = await open(url, { log });
+  const { context, tableId, table } = await open(url, { log, headless: flags.headless === true });
   try {
     // A capture is for finding out what the page really holds, so a part that fails is recorded and
     // the rest still taken: a refused snapshot still has ratings, a page that would not load still
@@ -296,7 +288,7 @@ async function watch(flags) {
   const url = need(flags, 'table');
   const iterations = iterationsOf(flags);
   const engine = loadPublished(PUBLISHED);
-  const { context, tableId, table } = await open(url);
+  const { context, tableId, table } = await open(url, { headless: flags.headless === true });
   try {
     console.log(`Watching table ${tableId}. Suggestions are generation ${engine.generation} at ${iterations} iterations,`);
     console.log('made from what a spectator can see: neither player\'s face-down reservations are known.\n');
@@ -324,6 +316,9 @@ async function watch(flags) {
 
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
+  if (flags.headless && !headlessAllowed(command)) {
+    throw new Error(`--headless is for \`watch\` and \`capture\`, which only read. \`${command}\` needs the window: a person signs in, clicks, or takes the game over in it.`);
+  }
   switch (command) {
     case 'login':
       return login();
@@ -338,7 +333,7 @@ async function main() {
     case 'report':
       return console.log(report(readResults(RESULTS)));
     default:
-      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | play --table <url> [--iterations N] | watch --table <url> [--iterations N] | report>');
+      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | play --table <url> [--iterations N] | watch --table <url> [--iterations N] | report>   (capture and watch take --headless)');
       process.exitCode = command ? 2 : 0;
   }
 }

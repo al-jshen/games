@@ -16,6 +16,7 @@ npm run bga -- login                   # once: sign in to BGA by hand in the win
 npm run bga -- advise --table 'https://boardgamearena.com/tableview?table=123456789'
 npm run bga -- play   --table '…' --iterations 1000
 npm run bga -- watch  --table '…'      # any game you are only spectating
+npm run bga -- watch  --table '…' --headless   # the same, with no window
 npm run bga -- report
 ```
 
@@ -62,6 +63,11 @@ pieces on the page, while the position is still on the table. Two things to know
   bugs: every game on BGA is a test of the read path, with nobody needing to play the bot.
 
 Nothing is recorded in the results log: a watched game is not a game the network played.
+
+`watch` and `capture` only read, so both take `--headless` to run with no window, on the same saved
+profile. Nothing else does: `login`, `advise` and `play` each need a person at the window. A machine
+with no display also needs Chromium's system libraries (`npx playwright install-deps chromium`, as
+root). Whether BGA serves a headless browser the same page has not been tried.
 
 ## When it stops
 
