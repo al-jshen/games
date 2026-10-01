@@ -12,7 +12,9 @@
     "@games/bot-splendor-duel": "*",
     "@games/engine": "*",
     "@games/net": "*",
-    "@games/splendor-duel": "*",
+    "@games/splendor-duel": "*"
+  },
+  "devDependencies": {
     "playwright": "^1.62.1"
   }
 }
