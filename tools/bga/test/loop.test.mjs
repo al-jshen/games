@@ -25,12 +25,6 @@ const randomBrain = (seed) => {
 
 const quiet = { say: () => {}, sleep: async () => {} };
 
-/** A game either finishes, or reaches the one position our rules and BGA's handle differently. */
-function endedProperly(result) {
-  if (result.outcome === 'finished') return true;
-  return result.refusal.reason === 'disagreement' && /stuck/.test(result.refusal.detail);
-}
-
 describe('runTable, advising', () => {
   it('advises every one of our decisions through a whole game, from either seat', async () => {
     for (const [seed, viewer] of [['loop-a', 0], ['loop-b', 1]]) {
@@ -44,13 +38,12 @@ describe('runTable, advising', () => {
       });
       const result = await runTable({ table, brain: randomBrain(seed), act, memory: emptyMemory(), ...quiet });
 
-      expect(endedProperly(result), JSON.stringify(result.refusal)).toBe(true);
+      // Each seeded game here is known to run to the end; a stop of any kind is a failure.
+      expect(result.outcome, JSON.stringify(result.refusal)).toBe('finished');
       expect(result.moves).toBeGreaterThan(10);
       expect(advised).toHaveLength(result.moves);
-      if (result.outcome === 'finished') {
-        expect(table.state.stage).toBe('over');
-        expect(resultOf(result.snapshot).result).toBe(table.state.winner === viewer ? 'win' : 'loss');
-      }
+      expect(table.state.stage).toBe('over');
+      expect(resultOf(result.snapshot).result).toBe(table.state.winner === viewer ? 'win' : 'loss');
     }
   });
 
@@ -65,14 +58,17 @@ describe('runTable, advising', () => {
       },
     });
     const result = await runTable({ table, brain: randomBrain('loop-contrary'), act, memory: emptyMemory(), ...quiet });
-    expect(endedProperly(result), JSON.stringify(result.refusal)).toBe(true);
+    expect(result.outcome, JSON.stringify(result.refusal)).toBe('finished');
+    expect(result.moves).toBeGreaterThan(10);
   });
 
   it('hands memory out after every snapshot, so a restart can pick the seen cards back up', async () => {
     const table = new FakeTable('loop-memory', 0);
     const saved = [];
     const act = makeAdvise({ present: async ({ action }) => table.play(action) });
-    await runTable({ table, brain: randomBrain('loop-memory'), act, memory: emptyMemory(), onMemory: (m) => saved.push(m), ...quiet });
+    const result = await runTable({ table, brain: randomBrain('loop-memory'), act, memory: emptyMemory(), onMemory: (m) => saved.push(m), ...quiet });
+    expect(result.outcome, JSON.stringify(result.refusal)).toBe('finished');
+    expect(result.moves).toBeGreaterThan(10);
     expect(saved.length).toBeGreaterThan(10);
     expect(Object.keys(saved.at(-1).seen).length).toBeGreaterThan(12);
   });
@@ -167,10 +163,10 @@ describe('runTable, playing', () => {
       const act = makePlay({ perform: (call) => table.perform(call), say: (line) => said.push(line) });
       const result = await runTable({ table, brain: randomBrain(seed), act, memory: emptyMemory(), ...quiet });
 
-      expect(endedProperly(result), JSON.stringify(result.refusal)).toBe(true);
+      expect(result.outcome, JSON.stringify(result.refusal)).toBe('finished');
       expect(result.moves).toBeGreaterThan(10);
       expect(said).toHaveLength(result.moves);
-      if (result.outcome === 'finished') expect(table.state.stage).toBe('over');
+      expect(table.state.stage).toBe('over');
     }
   });
 
