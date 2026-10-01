@@ -5081,6 +5081,11 @@ If the very first call fails with `This page exposes no action API the adapter k
 
 Commit any fix with a message saying what BGA actually expects.
 
+`play` refuses to start until `PLAY_VERIFIED` in `tools/bga/mode.mjs` is `true`, so for this game set it to `true` locally first. Keep it — and commit it, with the paragraph above it replaced by the date and the table id — only once the whole game has been watched through and every check above held, including that `perform` reached the page through its action API. If any of them failed, set it back to `false` and fix first.
+
+Run: `npx vitest run tools/bga && npm run lint`
+Expected: PASS, after changing the "ships closed" test in `tools/bga/test/mode.test.mjs` to expect `PLAY_VERIFIED` to be `true` (keep the test that `playAllowed({ verified: false })` refuses).
+
 ---
 
 ### Task 13: Say how it is used, and under what conditions

@@ -68,7 +68,7 @@ many games there were.
 
 ## Calibration — do this first
 
-As shipped, `advise` and `play` refuse **every** table. `MODE_CHECK_VERIFIED` in `mode.mjs` is
+As shipped, `advise` and `play` refuse **every** table, and `play` has a second gate of its own. `MODE_CHECK_VERIFIED` in `mode.mjs` is
 `false`, and stays false until the friendly-mode check has been seen to read a live friendly table
 as friendly *and* a live rated one as rated. A mode check that has never been seen to say "rated" is
 not a check.
@@ -85,9 +85,14 @@ step. In short:
    show what BGA really sends; fix `tableMode` (and `facts` in `reader.mjs`) until both read
    correctly.
 3. Only then set `MODE_CHECK_VERIFIED = true`, recording the date and the two capture files beside
-   it, and play one advised game before trusting `play`.
+   it. That opens `advise`, and only `advise`.
+4. Play one advised game. Then watch `play` through one whole friendly game (Task 12 Step 11): every
+   kind of call must reach the table, two-part moves included. `play` refuses to start, before it
+   opens a browser, until `PLAY_VERIFIED` in `mode.mjs` is `true`; set it there, recording the date
+   and the table, once that game has been watched through.
 
-If BGA later changes how a table reports its mode, set the flag back to `false` and repeat.
+If BGA later changes how a table reports its mode, set `MODE_CHECK_VERIFIED` back to `false` and
+repeat; if it changes how the page sends actions, do the same with `PLAY_VERIFIED`.
 
 ## How it is put together
 

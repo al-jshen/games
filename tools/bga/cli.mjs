@@ -20,7 +20,7 @@ import { openBrowser } from './browser.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
 import { runTable } from './loop.mjs';
 import { makePlay } from './play.mjs';
-import { guard, tableMode } from './mode.mjs';
+import { guard, playAllowed, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
@@ -233,10 +233,17 @@ const advise = (flags) =>
 // In `play` the program makes both clicks of a two-part move itself, so a table left between them
 // for half a minute is one whose second click never landed. In `advise` the operator takes as long
 // as they like.
-const play = (flags) =>
-  sit('play', flags, (table) => makePlay({ perform: (call) => table.perform(call), say: (line) => console.log(`\n${line}`) }), {
+function play(flags) {
+  const allowed = playAllowed();
+  if (!allowed.ok) {
+    console.error(`Refusing to play. ${allowed.why}`);
+    process.exitCode = 2;
+    return undefined;
+  }
+  return sit('play', flags, (table) => makePlay({ perform: (call) => table.perform(call), say: (line) => console.log(`\n${line}`) }), {
     midActionPatienceMs: 30_000,
   });
+}
 
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));

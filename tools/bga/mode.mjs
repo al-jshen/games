@@ -15,6 +15,27 @@
  */
 export const MODE_CHECK_VERIFIED = false;
 
+const no = (why) => ({ ok: false, why });
+
+/**
+ * False until `play` has been watched through one whole live friendly game -- Task 12 Step 11 of
+ * docs/superpowers/plans/2026-09-30-bga-adapter.md -- and the page's action API (`perform` in
+ * reader.mjs, written from BGA's typings and never run against a live page) has been seen to send
+ * every kind of call. Opening the mode check opens `advise`; it does not open `play`, which acts on
+ * the table by itself and comes after an advised game in the order of work.
+ */
+export const PLAY_VERIFIED = false;
+
+/** Whether the `play` command may run at all. Checked before a browser is opened. */
+export function playAllowed({ verified = PLAY_VERIFIED } = {}) {
+  if (verified !== true) {
+    return no(
+      '`play` has not yet been watched through a live friendly game (Task 12 Step 11 of docs/superpowers/plans/2026-09-30-bga-adapter.md). Use `advise` until then.',
+    );
+  }
+  return { ok: true };
+}
+
 /** BGA's reserved table option for the game mode: 0 normal, 1 friendly ("training"), 2 arena. */
 const GAME_MODE_OPTION = '201';
 
@@ -27,8 +48,6 @@ export function tableMode(info) {
   if (String(value) === '0' || String(value) === '2') return 'rated';
   return 'unknown';
 }
-
-const no = (why) => ({ ok: false, why });
 
 export function guard({ info, tableId, snapshot, verified = MODE_CHECK_VERIFIED }) {
   // Exactly `true`: a gate that a stray truthy value can open is not a gate.

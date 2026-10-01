@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guard, tableMode } from '../mode.mjs';
+import { PLAY_VERIFIED, guard, playAllowed, tableMode } from '../mode.mjs';
 
 /**
  * The gate both modes pass through. It is the one piece of this tool whose failure mode is not
@@ -83,5 +83,24 @@ describe('guard', () => {
   it('refuses the expansion, and a table we are only watching', () => {
     expect(guard({ ...pass, snapshot: snapshot({ expansion: true }) }).why).toMatch(/expansion/i);
     expect(guard({ ...pass, snapshot: { ...snapshot(), me: 9 } }).why).toMatch(/not seated/);
+  });
+});
+
+describe('playAllowed', () => {
+  it('ships closed', () => {
+    expect(PLAY_VERIFIED).toBe(false);
+    expect(playAllowed()).toMatchObject({ ok: false });
+  });
+
+  it('refuses `play` until it has been watched through a live game, and names the step', () => {
+    for (const verified of [undefined, false, 1, 'true', {}]) {
+      const verdict = playAllowed({ verified });
+      expect(verdict.ok, String(verified)).toBe(false);
+      expect(verdict.why).toMatch(/Task 12 Step 11/);
+    }
+  });
+
+  it('allows it once that is recorded, and only by an exact true', () => {
+    expect(playAllowed({ verified: true })).toEqual({ ok: true });
   });
 });
