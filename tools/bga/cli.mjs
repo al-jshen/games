@@ -22,7 +22,7 @@ import { runTable } from './loop.mjs';
 import { makePlay } from './play.mjs';
 import { guard, playAllowed, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
-import { makeTable, tableIdOf } from './reader.mjs';
+import { makeTable, playerIdsOf, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
 
 function parseArgs(argv) {
@@ -72,22 +72,33 @@ async function capture(flags) {
   const url = need(flags, 'table');
   const { context, tableId, table } = await open(url);
   try {
-    const raw = await table.snapshot();
-    const parsed = parseSnapshot(raw);
-    const playerIds = parsed.ok ? Object.values(parsed.snapshot.gamedatas.players).map((p) => p.id) : [];
-    const facts = await table.facts(playerIds);
-    const primitives = await table.primitives();
+    // A capture is for finding out what the page really holds, so a part that fails is recorded and
+    // the rest still taken: a refused snapshot still has ratings, a page that would not load still
+    // has its URL and whatever `gameui` offers.
+    let raw = null;
+    let error = null;
+    try {
+      raw = await table.snapshot();
+    } catch (thrown) {
+      error = thrown instanceof Error ? thrown.message : String(thrown);
+    }
+    const parsed = raw === null ? null : parseSnapshot(raw);
+    const playerIds = parsed?.ok ? Object.values(parsed.snapshot.gamedatas.players).map((p) => p.id) : playerIdsOf(raw);
+    const facts = await table.facts(playerIds).catch(() => ({ info: null, ratings: {} }));
+    const primitives = await table.primitives().catch((thrown) => ({ error: thrown instanceof Error ? thrown.message : String(thrown) }));
+    const schema = error ? `NOT READ: ${error}` : parsed.ok ? 'accepted' : parsed.refusal.detail;
     const file = save('captures', `${tableId}-${stamp()}.json`, {
       url,
       capturedAt: new Date().toISOString(),
-      schema: parsed.ok ? 'accepted' : parsed.refusal.detail,
+      schema,
+      error,
       raw,
       info: facts.info,
       ratings: facts.ratings,
       primitives,
     });
     console.log(`Saved ${file}`);
-    console.log(`  snapshot: ${parsed.ok ? 'matches the schema' : `REFUSED: ${parsed.refusal.detail}`}`);
+    console.log(`  snapshot: ${error ? `NOT READ: ${error}` : parsed.ok ? 'matches the schema' : `REFUSED: ${parsed.refusal.detail}`}`);
     console.log(`  game mode as read: ${tableMode(facts.info)}   (table settings ${facts.info ? 'received' : 'NOT received'})`);
     console.log(`  ratings as read: ${JSON.stringify(facts.ratings)}`);
   } finally {

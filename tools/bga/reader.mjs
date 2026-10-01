@@ -49,6 +49,17 @@ function stillOn(page, tableId) {
   throw new Error(`The browser is no longer on table ${tableId}: it is on ${other ? `table ${other} (${url})` : `"${url}"`}.`);
 }
 
+/**
+ * The seated players' ids, from a raw snapshot whether or not the schema accepted it -- so that
+ * `capture` can still read ratings from a page whose state has changed shape. Empty when there is
+ * nothing to read them from.
+ */
+export function playerIdsOf(raw) {
+  const players = raw?.gamedatas?.players;
+  if (players === null || typeof players !== 'object' || Array.isArray(players)) return [];
+  return Object.keys(players);
+}
+
 async function ready(page) {
   try {
     await page.waitForFunction(
