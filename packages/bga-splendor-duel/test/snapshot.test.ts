@@ -56,9 +56,26 @@ describe('the snapshot schema', () => {
 
 describe('state arguments', () => {
   it('reads buyable cards whether PHP sent a map or an empty list', () => {
-    const base = { privileges: 0, canRefill: false, mustRefill: false, canTakeTokens: true, canReserve: true, canBuyCard: false };
+    const base = {
+      privileges: 0,
+      canRefill: false,
+      mustRefill: false,
+      canTakeTokens: true,
+      canReserve: true,
+      canBuyCard: false,
+      playerAntiPlaying: false,
+      opponentAntiPlaying: false,
+    };
     expect(buyableIds(zPlayActionArgs.parse({ ...base, buyableCards: [] }))).toEqual([]);
     expect(buyableIds(zPlayActionArgs.parse({ ...base, buyableCards: { 12: [{}], 40: [{}] } }))).toEqual([12, 40]);
+  });
+
+  it('insists on the two anti-hoarding flags, which `argPlayAction` always sends', () => {
+    const base = { privileges: 0, canRefill: false, mustRefill: false, canTakeTokens: true, canReserve: true, canBuyCard: false, buyableCards: [] };
+    expect(zPlayActionArgs.safeParse(base).success).toBe(false);
+    expect(zPlayActionArgs.safeParse({ ...base, playerAntiPlaying: false }).success).toBe(false);
+    expect(zPlayActionArgs.safeParse({ ...base, playerAntiPlaying: false, opponentAntiPlaying: 0 }).success).toBe(false);
+    expect(zPlayActionArgs.safeParse({ ...base, playerAntiPlaying: false, opponentAntiPlaying: false }).success).toBe(true);
   });
 });
 

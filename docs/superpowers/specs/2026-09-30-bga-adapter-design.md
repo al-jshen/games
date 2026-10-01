@@ -183,10 +183,13 @@ legal, a refused call, expansion content. In every case: say exactly what was se
 snapshot beside the results for a later fixture, ring the terminal bell, leave the browser open, and
 do nothing further on that table.
 
-Known rule differences that land here rather than being modelled: BGA's forced refill when no
-mandatory action exists (we have `pass`), and BGA's option to end the game against an opponent
-hoarding all gold and pearls (we have `maxTurnsWithoutPurchase`). Both are rare, and guessing in
-either would mean playing a move the search never considered.
+Known rule differences that land here rather than being modelled: a position our rules find stuck,
+where only `pass` is legal (BGA's forced refill is modelled — our engine offers only `replenish`
+when nothing else is possible — and `pass` is the residue BGA has no move for); and BGA's option to
+end the game against a player hoarding all gold and pearls (we have `maxTurnsWithoutPurchase`).
+`argPlayAction` always sends `playerAntiPlaying` and `opponentAntiPlaying`, and `crossCheck` stops
+when either is true. Both are rare, and guessing in either would mean playing a move the search
+never considered.
 
 One known difference is handled rather than stopped on, because it is one of timing and not of
 position: BGA refills the table at the end of the turn (`refillCards` runs in `NextPlayer`), and

@@ -76,6 +76,22 @@ describe('crossCheck', () => {
   it('objects when BGA says we cannot reserve and we think we can', () => {
     expect(edited((s) => (s.gamestate.args.canReserve = false)).join(' ')).toMatch(/reserve/i);
   });
+
+  it('stops when BGA says we are hoarding every gold and pearl, a rule our engine does not model', () => {
+    const problems = edited((s) => (s.gamestate.args.playerAntiPlaying = true));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/our seat/i);
+    expect(problems[0]).toMatch(/opponent may end the game/i);
+    expect(problems[0]).toMatch(/not model/i);
+  });
+
+  it('stops when BGA says the opponent is hoarding every gold and pearl', () => {
+    const problems = edited((s) => (s.gamestate.args.opponentAntiPlaying = true));
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/opponent/i);
+    expect(problems[0]).toMatch(/we may end the game/i);
+    expect(problems[0]).toMatch(/not model/i);
+  });
 });
 
 describe('locate', () => {

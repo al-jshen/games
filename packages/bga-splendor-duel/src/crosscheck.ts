@@ -13,9 +13,11 @@ import { buyableIds, zPlayActionArgs, type BgaSnapshot } from './snapshot.js';
  * Returns one sentence per disagreement. Empty means agreement, which is the only case the loop
  * continues in.
  *
- * Two of BGA's rules are deliberately not modelled and land here as stops rather than as moves:
- * its forced refill when a player has nothing else (we have `pass` for the residue of that), and
- * its option to end the game against an opponent hoarding every gold and pearl.
+ * BGA's forced refill, when a player has nothing else to do, is modelled: our engine offers only
+ * `replenish` there, and the replenish check below compares it. Two things are deliberately not
+ * modelled and land here as stops rather than as moves: a seat our rules find stuck (we have `pass`,
+ * which BGA has no move for), and BGA's option to end the game against a player hoarding every gold
+ * and pearl.
  */
 export function crossCheck(view: SplendorView, seat: 0 | 1, snapshot: BgaSnapshot): string[] {
   const problems: string[] = [];
@@ -37,6 +39,17 @@ export function crossCheck(view: SplendorView, seat: 0 | 1, snapshot: BgaSnapsho
   const parsed = zPlayActionArgs.safeParse(snapshot.gamestate.args);
   if (!parsed.success) return [...problems, 'BGA sent arguments for this state that this adapter does not recognise.'];
   const args = parsed.data;
+
+  if (args.playerAntiPlaying) {
+    problems.push(
+      'BGA considers our seat to be hoarding every gold and pearl, so the opponent may end the game against us; our engine does not model that rule.',
+    );
+  }
+  if (args.opponentAntiPlaying) {
+    problems.push(
+      'BGA considers the opponent to be hoarding every gold and pearl, so we may end the game against them; our engine does not model that rule.',
+    );
+  }
 
   const weReplenish = actions.some((a) => a.t === 'replenish');
   if (weReplenish !== args.canRefill) {

@@ -100,6 +100,12 @@ export const zPlayActionArgs = z.object({
   canReserve: z.boolean(),
   canBuyCard: z.boolean(),
   buyableCards: z.union([z.array(z.unknown()).max(0), z.record(z.string(), z.unknown())]),
+  /**
+   * BGA's anti-hoarding rule: a seat that has begun three turns in a row holding every gold and
+   * pearl may have the game ended against it by the other. Always sent; our engine has no such rule.
+   */
+  playerAntiPlaying: z.boolean(),
+  opponentAntiPlaying: z.boolean(),
 });
 export type PlayActionArgs = z.infer<typeof zPlayActionArgs>;
 
