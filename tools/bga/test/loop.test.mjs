@@ -1,4 +1,4 @@
-import { emptyMemory } from '@games/bga-splendor-duel';
+import { emptyMemory, toBgaCalls } from '@games/bga-splendor-duel';
 import { RandomCursor } from '@games/engine';
 import { legalActionsFromView, redactFor } from '@games/splendor-duel';
 import { describe, expect, it } from 'vitest';
@@ -189,6 +189,59 @@ describe('runTable, playing', () => {
     expect(result.moves).toBe(1);
   });
 
+  const reserveFirst = (view, seat) => {
+    const { actions } = legalActionsFromView(view, seat);
+    return { action: actions.find((a) => a.t === 'reserve') ?? actions[0], value: 0 };
+  };
+
+  it('stops, instead of waiting for ever, when the table rests in the middle of one of our actions', async () => {
+    const table = new FakeTable('play-stuck', 0);
+    // A strategy whose first call lands and whose second never happens -- the page swallowed it --
+    // and which then reports success: the table sits in `reserveCard` with nothing more to come.
+    const act = async ({ action, view, at }) => {
+      const plan = toBgaCalls(action, view, at);
+      await table.perform(plan.calls[0]);
+      return { ok: true };
+    };
+    const result = await runTable({ table, brain: reserveFirst, act, memory: emptyMemory(), pollMs: 500, midActionPatienceMs: 2000, ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('mid-action');
+    expect(result.refusal.detail).toContain('reserveCard');
+    expect(result.moves).toBe(1);
+    // Well short of the fake's 20,000-pulse cap, which is where this used to end.
+    expect(table.pulses).toBeLessThan(100);
+  });
+
+  it('stops when the page accepts the second call of a move and nothing happens', async () => {
+    const table = new FakeTable('play-stuck', 0);
+    // BGA's `performAction` returns `undefined` rather than rejecting when its own check blocks a call.
+    const perform = async (call) => (call.name === 'actReserveCard' ? undefined : table.perform(call));
+    const act = makePlay({ perform, say: () => {}, actTimeoutMs: 1000 });
+    const result = await runTable({ table, brain: reserveFirst, act, memory: emptyMemory(), pollMs: 500, midActionPatienceMs: 30_000, ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('refused');
+    expect(result.refusal.detail).toMatch(/accepted actReserveCard, but the table did not change/);
+    expect(result.moves).toBe(1);
+    expect(table.pulses).toBeLessThan(100);
+  });
+
+  it('stops after one move, and searches no more, when a one-call move changes nothing', async () => {
+    const table = new FakeTable('play-silent', 0);
+    let searches = 0;
+    const takeTokens = (view, seat) => {
+      searches += 1;
+      const { actions } = legalActionsFromView(view, seat);
+      return { action: actions.find((a) => a.t === 'takeTokens') ?? actions[0], value: 0 };
+    };
+    const act = makePlay({ perform: async () => undefined, say: () => {}, actTimeoutMs: 1000 });
+    const result = await runTable({ table, brain: takeTokens, act, memory: emptyMemory(), pollMs: 500, ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('refused');
+    expect(result.refusal.detail).toMatch(/accepted actTakeTokens, but the table did not change/);
+    expect(result.moves).toBe(1);
+    expect(searches).toBe(1);
+  });
+
   it('stops when the table never reaches the state the second call needs', async () => {
     const table = new FakeTable('play-stuck', 0);
     // Accept every call and change nothing: the table never moves into `reserveCard` or the like.
@@ -200,6 +253,7 @@ describe('runTable, playing', () => {
     const result = await runTable({ table, brain: twoStep, act, memory: emptyMemory(), pollMs: 500, ...quiet });
     expect(result.outcome).toBe('stopped');
     expect(result.refusal.reason).toBe('refused');
-    expect(result.refusal.detail).toMatch(/reserveCard/);
+    expect(result.refusal.detail).toMatch(/After actTakeTokens, the table did not reach "reserveCard"/);
+    expect(result.moves).toBe(1);
   });
 });

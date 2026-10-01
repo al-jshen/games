@@ -44,7 +44,10 @@ export async function runTable(options) {
   }
 }
 
-async function run({ table, brain, act, say, sleep, memory, onMemory = () => {}, pollMs = 500, patienceMs = 30_000 }, counts) {
+async function run(
+  { table, brain, act, say, sleep, memory, onMemory = () => {}, pollMs = 500, patienceMs = 30_000, midActionPatienceMs = Infinity },
+  counts,
+) {
   let moves = 0;
   let raw = null;
   const stopped = (refusal) => ({ outcome: 'stopped', refusal, moves, raw });
@@ -83,15 +86,23 @@ async function run({ table, brain, act, say, sleep, memory, onMemory = () => {},
    * Wait for the page to rest somewhere we can act on, and to have rested there for two polls
    * running -- BGA passes through transient states between turns, and a reload in the middle of one
    * is a snapshot of nothing. A state we have no name for is given `patienceMs` to pass.
+   *
+   * The middle of one of our actions is given `midActionPatienceMs`. In `advise` that is for ever:
+   * the operator may sit between the two clicks of one move as long as they like. In `play` the
+   * program made the first click itself, so a table still waiting for the second means the second
+   * never landed, and waiting longer will not change that.
    */
   const settle = async () => {
     let last = null;
     let lost = 0;
+    let midway = 0;
     for (;;) {
       const pulse = await table.pulse();
       const at = where(pulse);
       lost = at === 'unknown' ? lost + pollMs : 0;
       if (lost >= patienceMs) return { at, pulse };
+      midway = at === 'wait' ? midway + pollMs : 0;
+      if (midway >= midActionPatienceMs) return { at, pulse };
       const print = fingerprint(pulse);
       if ((at === 'ours' || at === 'theirs' || at === 'over') && print === last) return { at, pulse };
       last = print;
@@ -105,6 +116,12 @@ async function run({ table, brain, act, say, sleep, memory, onMemory = () => {},
       return stopped({
         reason: 'unknown-state',
         detail: `The table has sat in BGA state "${pulse.name}" for ${Math.round(patienceMs / 1000)}s, and there is no translation for it.`,
+      });
+    }
+    if (at === 'wait') {
+      return stopped({
+        reason: 'mid-action',
+        detail: `The table has sat in BGA state "${pulse.name}", the middle of one of our actions, for ${Math.round(midActionPatienceMs / 1000)}s. Finish or cancel it by hand.`,
       });
     }
 
@@ -140,7 +157,16 @@ async function run({ table, brain, act, say, sleep, memory, onMemory = () => {},
     const { action, value } = brain(translated.view, translated.seat, moves);
     moves += 1;
     counts.moves = moves;
-    const outcome = await act({ action, value, view: translated.view, seat: translated.seat, at: locate(snapshot), before, waitWhile });
+    const outcome = await act({
+      action,
+      value,
+      view: translated.view,
+      seat: translated.seat,
+      at: locate(snapshot),
+      before,
+      pulse: () => table.pulse(),
+      waitWhile,
+    });
     if (!outcome.ok) return stopped(outcome.refusal);
   }
 }

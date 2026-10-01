@@ -140,7 +140,7 @@ export function makeTable(page, tableId) {
      *
      * UNVERIFIED until the live step of Task 12: which of the two action APIs the page exposes on
      * `gameui`. Both are tried, the current one first. A refusal from BGA rejects here with BGA's
-     * own message.
+     * own message, and so does a call the page declined to send at all.
      */
     async perform(call) {
       stillOn(page, tableId);
@@ -153,8 +153,14 @@ export function makeTable(page, tableId) {
               ? (n, a) => gameui.bgaPerformAction(n, a)
               : null;
         if (!send) throw new Error('This page exposes no action API the adapter knows.');
+        // BGA's typings: `performAction` returns `undefined`, not a rejection, when its own
+        // `checkAction` stops the call. Awaiting that would read as success for a call never sent.
+        const sent = send(name, args);
+        if (sent === null || (typeof sent !== 'object' && typeof sent !== 'function') || typeof sent.then !== 'function') {
+          throw new Error(`The page did not send ${name}: it is not allowed in the current state.`);
+        }
         try {
-          await send(name, args);
+          await sent;
         } catch (error) {
           // BGA rejects with a string or a `{ message }` object, neither of which survives the trip to node.
           throw new Error(typeof error === 'string' ? error : (error?.message ?? JSON.stringify(error)));

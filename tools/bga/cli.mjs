@@ -129,7 +129,7 @@ const signed = (value) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
  * The order here is the conditions of use, in code: nothing is advised or played until the table
  * has been shown to be friendly mode and the operator has confirmed the opponent was told.
  */
-async function sit(mode, flags, strategy) {
+async function sit(mode, flags, strategy, { midActionPatienceMs = Infinity } = {}) {
   const url = need(flags, 'table');
   const iterations = iterationsOf(flags);
   const engine = loadPublished(PUBLISHED);
@@ -176,6 +176,7 @@ async function sit(mode, flags, strategy) {
     sleep,
     memory: { ...emptyMemory(), seen },
     onMemory: (memory) => writeFileSync(memoryFile, JSON.stringify({ seen: memory.seen })),
+    midActionPatienceMs,
   });
 
   let final = result.outcome === 'finished' ? result.snapshot : null;
@@ -229,8 +230,13 @@ const advise = (flags) =>
     }),
   );
 
+// In `play` the program makes both clicks of a two-part move itself, so a table left between them
+// for half a minute is one whose second click never landed. In `advise` the operator takes as long
+// as they like.
 const play = (flags) =>
-  sit('play', flags, (table) => makePlay({ perform: (call) => table.perform(call), say: (line) => console.log(`\n${line}`) }));
+  sit('play', flags, (table) => makePlay({ perform: (call) => table.perform(call), say: (line) => console.log(`\n${line}`) }), {
+    midActionPatienceMs: 30_000,
+  });
 
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
