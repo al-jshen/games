@@ -21,12 +21,36 @@ import { crossCheck, locate, parseSnapshot, remember, stateKind, toView } from '
 /** Everything the page says about where the game is, without a reload. Changes when anything is done. */
 export const fingerprint = (pulse) => `${pulse.name}|${pulse.active}|${pulse.args}`;
 
-export async function runTable({ table, brain, act, say, sleep, memory, onMemory = () => {}, pollMs = 500, patienceMs = 30_000 }) {
+/** What an error said, with its kind when that is more than plain `Error` -- a `TypeError` is a bug here, not BGA. */
+function describeError(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.name && error.name !== 'Error' ? `${error.name}: ${error.message}` : error.message;
+}
+
+export async function runTable(options) {
+  const state = { moves: 0, raw: null };
+  try {
+    return await run(options, state);
+  } catch (error) {
+    // A reload that failed, a page that moved to another table, a strategy or a search that threw:
+    // all of them leave a game in progress, and the stop path is what hands it to the operator --
+    // with the bell, the saved snapshot and the result row. A rejection here would skip all three.
+    return {
+      outcome: 'stopped',
+      refusal: { reason: 'page-error', detail: `Stopped on an error: ${describeError(error)}` },
+      moves: state.moves,
+      raw: state.raw,
+    };
+  }
+}
+
+async function run({ table, brain, act, say, sleep, memory, onMemory = () => {}, pollMs = 500, patienceMs = 30_000 }, counts) {
   let moves = 0;
   let raw = null;
   const stopped = (refusal) => ({ outcome: 'stopped', refusal, moves, raw });
   const look = async () => {
     raw = await table.snapshot();
+    counts.raw = raw;
     return parseSnapshot(raw);
   };
 
@@ -115,6 +139,7 @@ export async function runTable({ table, brain, act, say, sleep, memory, onMemory
 
     const { action, value } = brain(translated.view, translated.seat, moves);
     moves += 1;
+    counts.moves = moves;
     const outcome = await act({ action, value, view: translated.view, seat: translated.seat, at: locate(snapshot), before, waitWhile });
     if (!outcome.ok) return stopped(outcome.refusal);
   }

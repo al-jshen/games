@@ -135,33 +135,38 @@ async function sit(mode, flags, strategy) {
   const engine = loadPublished(PUBLISHED);
   const { context, tableId, table } = await open(url);
 
-  const first = parseSnapshot(await table.snapshot());
-  if (!first.ok) {
-    await context.close();
-    throw new Error(first.refusal.detail);
-  }
-  const players = Object.values(first.snapshot.gamedatas.players);
-  const facts = await table.facts(players.map((p) => p.id));
-  const verdict = guard({ info: facts.info, tableId, snapshot: first.snapshot });
-  if (!verdict.ok) {
-    await context.close();
-    console.error(`Refusing this table. ${verdict.why}`);
-    process.exitCode = 2;
-    return;
-  }
-  const mine = players.find((p) => p.id === first.snapshot.me);
-  const theirs = players.find((p) => p.id !== first.snapshot.me);
+  // Until the loop starts nothing has been played, so any failure here closes the browser. Once it
+  // has started, nothing below closes it: a game is in progress and the operator finishes it there.
+  let mine, theirs, facts, memoryFile, seen;
+  try {
+    const first = parseSnapshot(await table.snapshot());
+    if (!first.ok) throw new Error(first.refusal.detail);
+    const players = Object.values(first.snapshot.gamedatas.players);
+    facts = await table.facts(players.map((p) => p.id));
+    const verdict = guard({ info: facts.info, tableId, snapshot: first.snapshot });
+    if (!verdict.ok) {
+      await context.close();
+      console.error(`Refusing this table. ${verdict.why}`);
+      process.exitCode = 2;
+      return;
+    }
+    mine = players.find((p) => p.id === first.snapshot.me);
+    theirs = players.find((p) => p.id !== first.snapshot.me);
 
-  console.log(`\nTable ${tableId}: friendly mode. Playing generation ${engine.generation} at ${iterations} iterations, mode "${mode}".`);
-  console.log('\nBefore the first move, post this in the table chat:\n');
-  console.log(`  ${NOTICE}\n`);
-  await confirmPosted();
+    console.log(`\nTable ${tableId}: friendly mode. Playing generation ${engine.generation} at ${iterations} iterations, mode "${mode}".`);
+    console.log('\nBefore the first move, post this in the table chat:\n');
+    console.log(`  ${NOTICE}\n`);
+    await confirmPosted();
 
-  // Only the cards seen survive a restart. The rest of memory is about the turn in progress, and a
-  // turn the adapter did not watch begin is one it should not pretend to remember.
-  const memoryFile = join(DATA, `${tableId}.memory.json`);
-  const seen = existsSync(memoryFile) ? JSON.parse(readFileSync(memoryFile, 'utf8')).seen : {};
-  mkdirSync(DATA, { recursive: true });
+    // Only the cards seen survive a restart. The rest of memory is about the turn in progress, and a
+    // turn the adapter did not watch begin is one it should not pretend to remember.
+    memoryFile = join(DATA, `${tableId}.memory.json`);
+    seen = existsSync(memoryFile) ? JSON.parse(readFileSync(memoryFile, 'utf8')).seen : {};
+    mkdirSync(DATA, { recursive: true });
+  } catch (error) {
+    await context.close().catch(() => {});
+    throw error;
+  }
 
   const result = await runTable({
     table,
@@ -181,13 +186,18 @@ async function sit(mode, flags, strategy) {
     console.log(`The snapshot is in ${file}.`);
     console.log('Finish the game by hand in the browser. This program does nothing more at this table,');
     console.log('and records the result once the game is over.');
+    // Polls only, until the game is over or the operator closes the page. A page that has gone, or
+    // a last reload that fails, is a result nobody can read: `unknown`, rather than a crash.
     for (;;) {
+      if (table.closed()) break;
       const pulse = await table.pulse().catch(() => null);
       if (pulse && stateKind(pulse.name) === 'over') break;
       await sleep(2000);
     }
-    const last = parseSnapshot(await table.snapshot());
-    final = last.ok ? last.snapshot : null;
+    if (!table.closed()) {
+      const last = await table.snapshot().then(parseSnapshot, () => null);
+      final = last?.ok ? last.snapshot : null;
+    }
   }
 
   const row = {
@@ -205,7 +215,7 @@ async function sit(mode, flags, strategy) {
   };
   appendResult(RESULTS, row);
   console.log(`\nGame over: ${row.result} (${row.reason}). Recorded in ${RESULTS}.`);
-  await context.close();
+  await context.close().catch(() => {});
 }
 
 const advise = (flags) =>

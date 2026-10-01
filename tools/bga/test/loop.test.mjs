@@ -108,6 +108,57 @@ describe('runTable, stopping', () => {
   });
 });
 
+describe('runTable, when the page fails', () => {
+  const advising = (table) => makeAdvise({ present: async ({ action }) => table.play(action) });
+
+  it('stops, with the error and the last snapshot, when a reload throws mid-game', async () => {
+    const table = new FakeTable('loop-a', 0);
+    const real = table.snapshot.bind(table);
+    let calls = 0;
+    let last = null;
+    table.snapshot = async () => {
+      calls += 1;
+      if (calls === 3) throw new Error('This page did not become a Splendor Duel game within a minute.');
+      last = await real();
+      return last;
+    };
+    const result = await runTable({ table, brain: randomBrain('loop-a'), act: advising(table), memory: emptyMemory(), ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('page-error');
+    expect(result.refusal.detail).toContain('did not become a Splendor Duel game');
+    expect(result.raw).toEqual(last);
+    // And nothing more was tried at the table after the failure.
+    expect(calls).toBe(3);
+  });
+
+  it('stops the same way when a poll throws mid-game', async () => {
+    const table = new FakeTable('loop-a', 0);
+    const real = table.pulse.bind(table);
+    table.pulse = async () => {
+      if (table.pulses >= 40) throw new Error('The browser is no longer on table 1: it is on table 2.');
+      return real();
+    };
+    const result = await runTable({ table, brain: randomBrain('loop-a'), act: advising(table), memory: emptyMemory(), ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('page-error');
+    expect(result.refusal.detail).toContain('no longer on table 1');
+    expect(result.raw).not.toBeNull();
+    expect(result.moves).toBeGreaterThan(0);
+  });
+
+  it('names a programming error for what it is, rather than passing it off as something BGA did', async () => {
+    const table = new FakeTable('loop-a', 0);
+    const brain = () => {
+      throw new TypeError("Cannot read properties of undefined (reading 't')");
+    };
+    const result = await runTable({ table, brain, act: advising(table), memory: emptyMemory(), ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('page-error');
+    expect(result.refusal.detail).toContain("TypeError: Cannot read properties of undefined (reading 't')");
+    expect(result.moves).toBe(0);
+  });
+});
+
 describe('runTable, playing', () => {
   it('plays a whole game through BGA’s own calls, from either seat', async () => {
     for (const [seed, viewer] of [['play-a', 0], ['play-b', 1]]) {

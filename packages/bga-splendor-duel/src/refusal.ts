@@ -24,7 +24,12 @@ export type RefusalReason =
   /** Our rules and BGA's allow different moves here. */
   | 'disagreement'
   /** BGA turned down a move we submitted. */
-  | 'refused';
+  | 'refused'
+  /**
+   * The page could not be read, or is no longer the table that was vetted. Also where an error
+   * thrown anywhere in the loop ends up, with its message, so that it stops the game cleanly.
+   */
+  | 'page-error';
 
 export interface Refusal {
   reason: RefusalReason;
