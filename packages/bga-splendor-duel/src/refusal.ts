@@ -12,6 +12,8 @@ export type RefusalReason =
   | 'expansion'
   /** The logged-in account is not seated at this table. */
   | 'spectator'
+  /** The logged-in account is seated at a table it asked only to watch. */
+  | 'seated'
   | 'not-our-turn'
   /** A BGA state with no translation. */
   | 'unknown-state'

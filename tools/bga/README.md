@@ -64,6 +64,19 @@ pieces on the page, while the position is still on the table. Two things to know
 
 Nothing is recorded in the results log: a watched game is not a game the network played.
 
+### What a working `watch` says about `advise`
+
+`watch`, `advise` and `play` are one loop (`loop.mjs`) with three settings, and all three begin with
+the same introduction (`session.mjs`), which prints both players' names and ratings. Reading the
+page, remembering, translating, cross-checking against BGA, searching, wording the move, outlining
+it and waiting for the table to move are the same code in every mode; `watch` and `advise` even use
+the same strategy and print through the same function. So a `watch` that works at a live table has
+run nearly all of `advise`. What it has not run:
+
+- the friendly-mode check, which only a seated mode makes;
+- the translation of our own seat, where our reservations arrive face-up;
+- the stop path, the result row at the end of the game, and the memory file.
+
 `watch` and `capture` only read, so both take `--headless` to run with no window, on the same saved
 profile. Nothing else does: `login`, `advise` and `play` each need a person at the window. A machine
 with no display also needs Chromium's system libraries (`npx playwright install-deps chromium`, as
@@ -76,6 +89,7 @@ root). Whether BGA serves a headless browser the same page has not been tried.
 | `bad-snapshot` | BGA's page no longer has the shape this reads. BGA changed something. |
 | `expansion` | The Counterfeiters expansion is on. Not supported. |
 | `spectator` | The signed-in account is not seated at this table. |
+| `seated` | (`watch`) The logged-in account is playing at this table. `watch` is for games you are not in. |
 | `not-our-turn` | A snapshot taken as our decision says the other seat is to act. |
 | `unknown-state` | The table sat in a state there is no translation for. |
 | `mid-action` | The table is in the middle of one of our two-part moves (a privilege, a reservation, a wild card). In `play`, it sat there for 30s: the second call never landed. Finish or cancel it by hand. |

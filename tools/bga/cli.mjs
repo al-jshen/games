@@ -29,7 +29,9 @@ import { guard, playAllowed, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, playerIdsOf, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
-import { watchTable, whoIs } from './watch.mjs';
+import { introduce } from './session.mjs';
+import { whoIs } from './suggest.mjs';
+import { watchTable } from './watch.mjs';
 
 function need(flags, name) {
   if (!flags[name]) throw new Error(`Missing --${name}.`);
@@ -172,10 +174,11 @@ async function sit(mode, flags, strategy, { midActionPatienceMs = Infinity } = {
   // has started, nothing below closes it: a game is in progress and the operator finishes it there.
   let mine, theirs, facts, memoryFile, seen;
   try {
-    const first = parseSnapshot(await table.snapshot());
-    if (!first.ok) throw new Error(first.refusal.detail);
+    console.log(`\nTable ${tableId}:`);
+    const first = await introduce({ table, say: (line) => console.log(line) });
+    if (!first.ok) throw new Error(first.why);
     const players = Object.values(first.snapshot.gamedatas.players);
-    facts = await table.facts(players.map((p) => p.id));
+    facts = first.facts;
     const verdict = guard({ info: facts.info, tableId, snapshot: first.snapshot });
     if (!verdict.ok) {
       await context.close();
@@ -186,7 +189,7 @@ async function sit(mode, flags, strategy, { midActionPatienceMs = Infinity } = {
     mine = players.find((p) => p.id === first.snapshot.me);
     theirs = players.find((p) => p.id !== first.snapshot.me);
 
-    console.log(`\nTable ${tableId}: friendly mode. Playing generation ${engine.generation} at ${iterations} iterations, mode "${mode}".`);
+    console.log(`\nFriendly mode. Playing generation ${engine.generation} at ${iterations} iterations, mode "${mode}".`);
     console.log('\nBefore the first move, post this in the table chat:\n');
     console.log(`  ${NOTICE}\n`);
     await confirmPosted();
@@ -252,16 +255,18 @@ async function sit(mode, flags, strategy, { midActionPatienceMs = Infinity } = {
   await context.close().catch(() => {});
 }
 
-const advise = (flags) =>
-  sit('advise', flags, (table) =>
-    makeAdvise({
-      present: async ({ instruction, value }) => {
-        console.log(`\n▶ ${instruction.text}    (search value ${signed(value)})`);
-        instruction.steps.forEach((step, i) => console.log(`   ${i + 1}. ${step}`));
-        await table.show(instruction.highlight);
-      },
-    }),
-  );
+/**
+ * Put a suggestion in front of the person at the terminal: who is to move, the move, the clicks it
+ * takes, and the pieces outlined on the page. `advise` and `watch` both print through this, so what
+ * one shows for a position is what the other would.
+ */
+const presenter = (table) => async ({ seat, playerId, name, text, steps, highlight, value }) => {
+  console.log(`\n▶ ${whoIs({ name, playerId, seat })} to move. The bot would play: ${text}    (search value ${signed(value)})`);
+  steps.forEach((step, i) => console.log(`   ${i + 1}. ${step}`));
+  await table.show(highlight);
+};
+
+const advise = (flags) => sit('advise', flags, (table) => makeAdvise({ present: presenter(table) }));
 
 // In `play` the program makes both clicks of a two-part move itself, so a table left between them
 // for half a minute is one whose second click never landed. In `advise` the operator takes as long
@@ -290,27 +295,29 @@ async function watch(flags) {
   const engine = loadPublished(PUBLISHED);
   const { context, tableId, table } = await open(url, { headless: flags.headless === true });
   try {
-    console.log(`Watching table ${tableId}. Suggestions are generation ${engine.generation} at ${iterations} iterations,`);
-    console.log('made from what a spectator can see: neither player\'s face-down reservations are known.\n');
+    console.log(`\nWatching table ${tableId}:`);
+    const first = await introduce({ table, say: (line) => console.log(line) });
+    if (!first.ok) throw new Error(first.why);
+    console.log(`\nSuggestions are generation ${engine.generation} at ${iterations} iterations, made from what a spectator`);
+    console.log("can see: neither player's face-down reservations are known.");
     const result = await watchTable({
       table,
       brain: makeBrain(engine, iterations, tableId),
-      present: async ({ seat, playerId, name, text, steps, highlight, value }) => {
-        console.log(`\n▶ ${whoIs({ name, playerId, seat })} to move. The bot would play: ${text}    (search value ${signed(value)})`);
-        steps.forEach((step) => console.log(`     ${step}`));
-        await table.show(highlight);
-      },
+      present: presenter(table),
       say: (line) => console.log(line),
       sleep,
     });
     if (result.outcome === 'refused') {
       console.error(`Not watching this table. ${result.why}`);
       process.exitCode = 2;
+    } else if (result.outcome === 'stopped') {
+      console.error(`\nStopped watching (${result.refusal.reason}). ${result.refusal.detail}`);
+      process.exitCode = 1;
     } else {
       console.log(`\nThe game is over. ${result.suggestions} position(s) looked at.`);
     }
   } finally {
-    await context.close();
+    await context.close().catch(() => {});
   }
 }
 

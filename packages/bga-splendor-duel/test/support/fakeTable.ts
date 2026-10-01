@@ -14,7 +14,7 @@ import {
 } from '@games/splendor-duel';
 import { gemFromBga } from '../../src/ids.js';
 import { pick } from './play.js';
-import { PLAYER_ID, cardIdOfBga, heldTokenColor, royalIdOfBga, stateOf, synthSnapshot, type Viewer } from './synth.js';
+import { PLAYER_ID, PLAYER_RATING, cardIdOfBga, heldTokenColor, royalIdOfBga, stateOf, synthSnapshot, type Viewer } from './synth.js';
 
 /**
  * A BGA table, as far as the adapter can tell: something that can be pulsed, snapshotted, and sent
@@ -49,10 +49,18 @@ export class FakeTable {
   private turnStart: SplendorState;
   private readonly rng: RandomCursor;
 
-  /** `viewer` is our seat, or `null` for a table we are only watching: then both seats play themselves. */
+  /**
+   * `viewer` is our seat, or `null` for a table we are only watching: then both seats play themselves.
+   *
+   * `thinks` is how many pulses a player who is not ours takes over a move. A person takes seconds,
+   * which is many polls; it must at least be more than the loop spends on one position (two pulses
+   * to see the table at rest, one to see it has not moved under the search), or every suggestion
+   * would be about a position already gone.
+   */
   constructor(
     seed: string,
     readonly viewer: Viewer,
+    private readonly thinks = 5,
   ) {
     this.state = setup({ seed, seats: [0, 1], options: {} });
     this.turnStart = this.state;
@@ -70,7 +78,7 @@ export class FakeTable {
     this.pulses += 1;
     if (this.pulses > 20_000) throw new Error('FakeTable: 20,000 pulses and the game has not ended');
     const theirs = this.state.stage !== 'over' && this.state.turn !== this.viewer;
-    if (theirs && ++this.ticks % 3 === 0) {
+    if (theirs && ++this.ticks % this.thinks === 0) {
       const seat = this.state.turn as 0 | 1;
       this.force(seat, pick(legalActions(this.state, seat).actions, this.rng));
     }
@@ -86,6 +94,16 @@ export class FakeTable {
   private seat(): 0 | 1 {
     if (this.viewer === null) throw new Error('FakeTable: nobody at this table is ours, so nothing can be played from here');
     return this.viewer;
+  }
+
+  /** The table's settings and the players' ratings, as the page reader hands them over. */
+  async facts(playerIds: number[]): Promise<{ info: unknown; ratings: Record<number, number | null> }> {
+    const ratings: Record<number, number | null> = {};
+    for (const id of playerIds) {
+      const seat = PLAYER_ID.indexOf(id);
+      ratings[id] = seat === 0 || seat === 1 ? PLAYER_RATING[seat] : null;
+    }
+    return { info: null, ratings };
   }
 
   /** The operator, doing as advised. */

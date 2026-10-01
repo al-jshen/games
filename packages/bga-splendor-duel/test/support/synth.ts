@@ -24,6 +24,8 @@ import { parseSnapshot, type BgaSnapshot } from '../../src/snapshot.js';
 
 export const PLAYER_ID: readonly [number, number] = [1000, 2000];
 export const PLAYER_NAME: readonly [string, string] = ['Ann', 'Bob'];
+/** What the fake table says each player is rated. Shown to a person, never read by the translation. */
+export const PLAYER_RATING: readonly [number, number] = [1510, 1640];
 /** The account looking on when nobody at the table is us. */
 export const SPECTATOR_ID = 999;
 /** Whose eyes a synthetic snapshot is seen through: a seat, or `null` for someone only watching. */

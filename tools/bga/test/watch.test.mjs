@@ -79,11 +79,53 @@ describe('watchTable', () => {
       sleep: async () => {},
     });
     expect(said.join('\n')).toMatch(/expansion/i);
-    // And, once at the start, who is who: the names on the table against BGA's numbers for them.
-    expect(said.join('\n')).toContain('Ann (seat 1) is BGA player 1000');
-    expect(said.join('\n')).toContain('Bob (seat 2) is BGA player 2000');
     expect(result.outcome).toBe('finished');
     expect(presented).toBeGreaterThan(30);
+  });
+});
+
+describe('watchTable, when things go wrong', () => {
+  it('ends with the reason, not an exception, when the page fails mid-game', async () => {
+    const table = new FakeTable('watch-broken', null);
+    const real = table.snapshot.bind(table);
+    let calls = 0;
+    table.snapshot = async () => {
+      calls += 1;
+      if (calls === 4) throw new Error('The browser is no longer on table 1');
+      return real();
+    };
+    const result = await watchTable({ table, brain: randomBrain('watch-broken'), present: async () => {}, ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('page-error');
+    expect(result.refusal.detail).toContain('no longer on table 1');
+    expect(result.suggestions).toBeGreaterThan(0);
+  });
+
+  it('says nothing about a position that moved on while it was thinking', async () => {
+    const table = new FakeTable('watch-stale', null);
+    const random = randomBrain('watch-stale');
+    let thought = 0;
+    let presented = 0;
+    const result = await watchTable({
+      table,
+      // On its third position, the game moves while the search is still running.
+      brain: (view, seat) => {
+        thought += 1;
+        const picked = random(view, seat);
+        if (thought === 3) table.force(seat, picked.action);
+        return picked;
+      },
+      present: async ({ seat, action, text }) => {
+        // Every suggestion shown is about the position on the table at that moment.
+        expect(table.state.turn).toBe(seat);
+        expect(apply(table.state, seat, action).ok, text).toBe(true);
+        presented += 1;
+      },
+      ...quiet,
+    });
+    expect(result.outcome).toBe('finished');
+    expect(presented).toBe(thought - 1);
+    expect(result.suggestions).toBe(presented);
   });
 });
 

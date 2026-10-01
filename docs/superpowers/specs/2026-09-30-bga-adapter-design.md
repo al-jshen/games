@@ -22,6 +22,12 @@ A third mode, added after the first two, is for a table the logged-in account is
   an opponent's (`asSeat`, and `spectating` in `toView` and `crossCheck`). Nothing it sees is
   recorded as a result.
 
+All three modes are one loop with three settings: whose decisions are covered (our seat's, or both
+players' from the stands), what a doubt does (stop, or say so and skip), and the strategy (tell a
+person, or perform the move). `watch` and `advise` share the strategy too. All three open with the
+same introduction, which prints both players' names and ratings. The sharing is the point: a
+`watch` that works at a live table has exercised nearly all of `advise`.
+
 `advise` is the robust one and is built first. It has no write path to break, and every decision
 starts from a fresh snapshot, so it does not care whether the last move was the one it suggested.
 `play` adds only the translation from our action to BGA's calls, on top of a read path that `advise`

@@ -4,6 +4,7 @@ import { legalActionsFromView, redactFor } from '@games/splendor-duel';
 import { describe, expect, it } from 'vitest';
 import { FakeTable } from '../../../packages/bga-splendor-duel/test/support/fakeTable.ts';
 import { pick } from '../../../packages/bga-splendor-duel/test/support/play.ts';
+import { PLAYER_ID, PLAYER_NAME } from '../../../packages/bga-splendor-duel/test/support/synth.ts';
 import { makeAdvise } from '../advise.mjs';
 import { runTable } from '../loop.mjs';
 import { makePlay } from '../play.mjs';
@@ -31,7 +32,12 @@ describe('runTable, advising', () => {
       const table = new FakeTable(seed, viewer);
       const advised = [];
       const act = makeAdvise({
-        present: async ({ instruction, action }) => {
+        present: async ({ instruction, action, seat, playerId, name, text, steps, highlight }) => {
+          // The same fields `watch` is given, about our own seat: one presenter serves both.
+          expect(seat).toBe(viewer);
+          expect(playerId).toBe(PLAYER_ID[viewer]);
+          expect(name).toBe(PLAYER_NAME[viewer]);
+          expect({ text, steps, highlight }).toEqual(instruction);
           advised.push(instruction.text);
           table.play(action);
         },
@@ -75,6 +81,14 @@ describe('runTable, advising', () => {
 });
 
 describe('runTable, stopping', () => {
+  it('will not sit at a table the logged-in account is only watching', async () => {
+    const table = new FakeTable('loop-spectator', null);
+    const result = await runTable({ table, brain: randomBrain('x'), act: async () => ({ ok: true }), memory: emptyMemory(), ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('spectator');
+    expect(result.moves).toBe(0);
+  });
+
   it('stops on a snapshot it cannot read, and keeps that snapshot', async () => {
     const table = new FakeTable('loop-garbled', 0);
     table.snapshot = async () => ({ not: 'a game' });
