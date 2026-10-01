@@ -2,21 +2,26 @@
 /**
  * Play Splendor Duel on boardgamearena.com with the published network.
  *
- *   npm run bga -- login                       sign in to BGA, once, by hand
- *   npm run bga -- capture --table <url>       save what the adapter sees at a table; changes nothing
- *   npm run bga -- report                      the rating the results so far support
+ *   npm run bga -- login                                    sign in to BGA, once, by hand
+ *   npm run bga -- capture --table <url>                    save what the adapter sees; changes nothing
+ *   npm run bga -- advise  --table <url> [--iterations N]   tell the operator what to play
+ *   npm run bga -- report                                   the rating the results so far support
  *
  * See README.md beside this file for the conditions this is used under. They are not optional.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseSnapshot } from '@games/bga-splendor-duel';
+import { createInterface } from 'node:readline/promises';
+import { emptyMemory, parseSnapshot, stateKind } from '@games/bga-splendor-duel';
+import { makeAdvise } from './advise.mjs';
 import { openBrowser } from './browser.mjs';
-import { tableMode } from './mode.mjs';
-import { DATA, PROFILE, RESULTS } from './paths.mjs';
+import { loadPublished, makeBrain } from './engine.mjs';
+import { runTable } from './loop.mjs';
+import { guard, tableMode } from './mode.mjs';
+import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, tableIdOf } from './reader.mjs';
-import { readResults, report } from './results.mjs';
+import { appendResult, readResults, report, resultOf } from './results.mjs';
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -88,6 +93,130 @@ async function capture(flags) {
   }
 }
 
+/** What the opponent is told. Printed for the operator to post; this program does not post it. */
+const NOTICE =
+  'Hello! This seat is played by a bot: an in-house neural network with search that we are evaluating. ' +
+  'This is a friendly, unrated game. Good luck, and thank you for playing it.';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The search budget, held to the range the web client's dial allows. */
+function iterationsOf(flags) {
+  const n = Number(flags.iterations ?? 1000);
+  if (!Number.isFinite(n)) throw new Error('--iterations must be a number.');
+  return Math.min(5000, Math.max(100, Math.round(n)));
+}
+
+async function confirmPosted() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (;;) {
+      const answer = await rl.question('Type "posted" once that notice is in the table chat: ');
+      if (answer.trim().toLowerCase() === 'posted') return;
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+const signed = (value) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+
+/**
+ * Sit at a table in one of the two modes. `strategy(table)` returns the loop's `act`.
+ *
+ * The order here is the conditions of use, in code: nothing is advised or played until the table
+ * has been shown to be friendly mode and the operator has confirmed the opponent was told.
+ */
+async function sit(mode, flags, strategy) {
+  const url = need(flags, 'table');
+  const iterations = iterationsOf(flags);
+  const engine = loadPublished(PUBLISHED);
+  const { context, tableId, table } = await open(url);
+
+  const first = parseSnapshot(await table.snapshot());
+  if (!first.ok) {
+    await context.close();
+    throw new Error(first.refusal.detail);
+  }
+  const players = Object.values(first.snapshot.gamedatas.players);
+  const facts = await table.facts(players.map((p) => p.id));
+  const verdict = guard({ info: facts.info, tableId, snapshot: first.snapshot });
+  if (!verdict.ok) {
+    await context.close();
+    console.error(`Refusing this table. ${verdict.why}`);
+    process.exitCode = 2;
+    return;
+  }
+  const mine = players.find((p) => p.id === first.snapshot.me);
+  const theirs = players.find((p) => p.id !== first.snapshot.me);
+
+  console.log(`\nTable ${tableId}: friendly mode. Playing generation ${engine.generation} at ${iterations} iterations, mode "${mode}".`);
+  console.log('\nBefore the first move, post this in the table chat:\n');
+  console.log(`  ${NOTICE}\n`);
+  await confirmPosted();
+
+  // Only the cards seen survive a restart. The rest of memory is about the turn in progress, and a
+  // turn the adapter did not watch begin is one it should not pretend to remember.
+  const memoryFile = join(DATA, `${tableId}.memory.json`);
+  const seen = existsSync(memoryFile) ? JSON.parse(readFileSync(memoryFile, 'utf8')).seen : {};
+  mkdirSync(DATA, { recursive: true });
+
+  const result = await runTable({
+    table,
+    brain: makeBrain(engine, iterations, tableId),
+    act: strategy(table),
+    say: (line) => console.log(line),
+    sleep,
+    memory: { ...emptyMemory(), seen },
+    onMemory: (memory) => writeFileSync(memoryFile, JSON.stringify({ seen: memory.seen })),
+  });
+
+  let final = result.outcome === 'finished' ? result.snapshot : null;
+  if (result.outcome === 'stopped') {
+    process.stdout.write('\x07');
+    const file = save('stops', `${tableId}-${stamp()}.json`, { refusal: result.refusal, raw: result.raw });
+    console.log(`\nSTOPPED (${result.refusal.reason}). ${result.refusal.detail}`);
+    console.log(`The snapshot is in ${file}.`);
+    console.log('Finish the game by hand in the browser. This program does nothing more at this table,');
+    console.log('and records the result once the game is over.');
+    for (;;) {
+      const pulse = await table.pulse().catch(() => null);
+      if (pulse && stateKind(pulse.name) === 'over') break;
+      await sleep(2000);
+    }
+    const last = parseSnapshot(await table.snapshot());
+    final = last.ok ? last.snapshot : null;
+  }
+
+  const row = {
+    table: tableId,
+    at: new Date().toISOString(),
+    mode,
+    generation: engine.generation,
+    iterations,
+    seat: (mine?.playerNo ?? 1) - 1,
+    opponent: theirs?.id ?? null,
+    opponentRating: theirs ? (facts.ratings[theirs.id] ?? null) : null,
+    ...(final ? resultOf(final) : { result: 'unknown', reason: 'other' }),
+    moves: result.moves,
+    handedOver: result.outcome === 'stopped',
+  };
+  appendResult(RESULTS, row);
+  console.log(`\nGame over: ${row.result} (${row.reason}). Recorded in ${RESULTS}.`);
+  await context.close();
+}
+
+const advise = (flags) =>
+  sit('advise', flags, (table) =>
+    makeAdvise({
+      present: async ({ instruction, value }) => {
+        console.log(`\n▶ ${instruction.text}    (search value ${signed(value)})`);
+        instruction.steps.forEach((step, i) => console.log(`   ${i + 1}. ${step}`));
+        await table.show(instruction.highlight);
+      },
+    }),
+  );
+
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -95,10 +224,12 @@ async function main() {
       return login();
     case 'capture':
       return capture(flags);
+    case 'advise':
+      return advise(flags);
     case 'report':
       return console.log(report(readResults(RESULTS)));
     default:
-      console.log('Usage: npm run bga -- <login | capture --table <url> | report>');
+      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | report>');
       process.exitCode = command ? 2 : 0;
   }
 }
