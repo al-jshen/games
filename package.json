@@ -33,7 +33,8 @@
     "test:e2e": "playwright test",
     "bench": "npm run -w @games/tool-bench start",
     "selfplay": "npm run -w @games/tool-selfplay start --",
-    "selfplay:generate": "npm run -w @games/tool-selfplay generate --"
+    "selfplay:generate": "npm run -w @games/tool-selfplay generate --",
+    "bga": "npm run -w @games/tool-bga start --"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

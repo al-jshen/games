@@ -18,6 +18,7 @@ const NODE_GLOBALS = {
   clearInterval: 'readonly',
   TextEncoder: 'readonly',
   TextDecoder: 'readonly',
+  structuredClone: 'readonly',
 };
 
 /** Browser globals used by the web app and the game UIs. */
