@@ -3,7 +3,8 @@ import { apply, legalActionsFromView } from '@games/splendor-duel';
 import { describe, expect, it } from 'vitest';
 import { FakeTable } from '../../../packages/bga-splendor-duel/test/support/fakeTable.ts';
 import { pick } from '../../../packages/bga-splendor-duel/test/support/play.ts';
-import { describeSuggestion, watchTable } from '../watch.mjs';
+import { PLAYER_NAME } from '../../../packages/bga-splendor-duel/test/support/synth.ts';
+import { describeSuggestion, watchTable, whoIs } from '../watch.mjs';
 
 /**
  * Watching a game we are not in.
@@ -28,10 +29,12 @@ describe('watchTable', () => {
     const result = await watchTable({
       table,
       brain: randomBrain('watch-a'),
-      present: async ({ seat, action, text }) => {
+      present: async ({ seat, name, action, text }) => {
         // The position is still the one the suggestion is about: nothing has moved since the
         // snapshot, and the suggested move is one the engine accepts from that player right now.
         expect(table.state.turn).toBe(seat);
+        // And it says who that is by the name on the table, not only by BGA's number for them.
+        expect(name).toBe(PLAYER_NAME[seat]);
         expect(apply(table.state, seat, action).ok, text).toBe(true);
         seen.push(seat);
       },
@@ -76,6 +79,9 @@ describe('watchTable', () => {
       sleep: async () => {},
     });
     expect(said.join('\n')).toMatch(/expansion/i);
+    // And, once at the start, who is who: the names on the table against BGA's numbers for them.
+    expect(said.join('\n')).toContain('Ann (seat 1) is BGA player 1000');
+    expect(said.join('\n')).toContain('Bob (seat 2) is BGA player 2000');
     expect(result.outcome).toBe('finished');
     expect(presented).toBeGreaterThan(30);
   });
@@ -122,5 +128,13 @@ describe('watchTable, with the published network', () => {
     expect(result.outcome).toBe('finished');
     expect(searched).toBeGreaterThan(5);
     expect(withHidden).toBeGreaterThan(0);
+  });
+});
+
+describe('whoIs', () => {
+  it('names the mover as the table does, and falls back to the id when BGA sends no name', () => {
+    expect(whoIs({ name: 'Ann', playerId: 1000, seat: 0 })).toBe('Ann (seat 1)');
+    expect(whoIs({ name: null, playerId: 2000, seat: 1 })).toBe('player 2000 (seat 2)');
+    expect(whoIs({ name: '   ', playerId: 2000, seat: 1 })).toBe('player 2000 (seat 2)');
   });
 });

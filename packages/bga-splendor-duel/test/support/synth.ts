@@ -23,6 +23,7 @@ import { parseSnapshot, type BgaSnapshot } from '../../src/snapshot.js';
  */
 
 export const PLAYER_ID: readonly [number, number] = [1000, 2000];
+export const PLAYER_NAME: readonly [string, string] = ['Ann', 'Bob'];
 /** The account looking on when nobody at the table is us. */
 export const SPECTATOR_ID = 999;
 /** Whose eyes a synthetic snapshot is seen through: a seat, or `null` for someone only watching. */
@@ -128,6 +129,7 @@ function playerJson(state: SplendorState, seat: 0 | 1, viewer: Viewer) {
   ].sort((a, b) => a.locationArg - b.locationArg);
   return {
     id: String(pid),
+    name: PLAYER_NAME[seat],
     score: state.winner === seat ? 1 : 0,
     playerNo: seat + 1,
     privileges: player.privileges,

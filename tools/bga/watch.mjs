@@ -58,6 +58,12 @@ export function describeSuggestion(action, view, seat, at) {
   return instruct(action, view, at);
 }
 
+/** Who is to move, as a person watching would say it: by the name on the table, or failing that BGA's number. */
+export function whoIs({ name, playerId, seat }) {
+  const shown = typeof name === 'string' && name.trim() !== '' ? name.trim() : `player ${playerId}`;
+  return `${shown} (seat ${seat + 1})`;
+}
+
 export async function watchTable({ table, brain, present, say, sleep, pollMs = 500 }) {
   const first = parseSnapshot(await table.snapshot());
   if (!first.ok) return { outcome: 'refused', why: first.refusal.detail };
@@ -66,6 +72,11 @@ export async function watchTable({ table, brain, present, say, sleep, pollMs = 5
       outcome: 'refused',
       why: 'The logged-in account is seated at this table. `watch` is for games you are not in; your own seat goes through `advise`.',
     };
+  }
+
+  const seats = Object.values(first.snapshot.gamedatas.players).sort((a, b) => a.playerNo - b.playerNo);
+  for (const player of seats) {
+    say(`  ${whoIs({ name: player.name, playerId: player.id, seat: player.playerNo - 1 })} is BGA player ${player.id}`);
   }
 
   // One memory per player, each fed the snapshot as seen from that player's seat: what they owned
@@ -119,7 +130,8 @@ export async function watchTable({ table, brain, present, say, sleep, pollMs = 5
           for (const warning of warnings) say(`  note: ${warning}`);
           const { action, value } = brain(view, seat, suggestions);
           suggestions += 1;
-          await present({ seat, playerId: mover, action, value, ...describeSuggestion(action, view, seat, locate(seated)) });
+          const name = Object.values(snapshot.gamedatas.players).find((player) => player.id === mover)?.name ?? null;
+          await present({ seat, playerId: mover, name, action, value, ...describeSuggestion(action, view, seat, locate(seated)) });
         }
       }
     }

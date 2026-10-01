@@ -2,7 +2,7 @@ import { setup } from '@games/splendor-duel';
 import { describe, expect, it } from 'vitest';
 import { buyableIds, parseSnapshot, zPlayActionArgs } from '../src/snapshot.js';
 import { stateKind } from '../src/states.js';
-import { PLAYER_ID, synthSnapshot } from './support/synth.js';
+import { PLAYER_ID, PLAYER_NAME, synthSnapshot } from './support/synth.js';
 import { walk } from './support/play.js';
 
 /**
@@ -51,6 +51,21 @@ describe('the snapshot schema', () => {
     expect(parseSnapshot(raw).ok).toBe(false);
     expect(parseSnapshot(null).ok).toBe(false);
     expect(parseSnapshot('gamedatas').ok).toBe(false);
+  });
+});
+
+describe('player names', () => {
+  it('keeps the name BGA gives each player, and does not insist on one', () => {
+    const named = parseSnapshot(clone(synthSnapshot(opening(), 0)));
+    if (!named.ok) throw new Error(named.refusal.detail);
+    expect(Object.values(named.snapshot.gamedatas.players).map((p) => p.name).sort()).toEqual([...PLAYER_NAME].sort());
+
+    // A name is for telling people apart on screen; a snapshot without one is still a position.
+    const raw = clone(synthSnapshot(opening(), 0)) as { gamedatas: { players: Record<string, { name?: string }> } };
+    for (const player of Object.values(raw.gamedatas.players)) delete player.name;
+    const bare = parseSnapshot(raw);
+    expect(bare.ok).toBe(true);
+    if (bare.ok) expect(Object.values(bare.snapshot.gamedatas.players).every((p) => p.name === undefined)).toBe(true);
   });
 });
 

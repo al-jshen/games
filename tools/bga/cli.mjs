@@ -26,7 +26,7 @@ import { guard, playAllowed, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, playerIdsOf, tableIdOf } from './reader.mjs';
 import { appendResult, readResults, report, resultOf } from './results.mjs';
-import { watchTable } from './watch.mjs';
+import { watchTable, whoIs } from './watch.mjs';
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -303,8 +303,8 @@ async function watch(flags) {
     const result = await watchTable({
       table,
       brain: makeBrain(engine, iterations, tableId),
-      present: async ({ seat, playerId, text, steps, highlight, value }) => {
-        console.log(`\n▶ seat ${seat + 1} (player ${playerId}) to move. The bot would play: ${text}    (search value ${signed(value)})`);
+      present: async ({ seat, playerId, name, text, steps, highlight, value }) => {
+        console.log(`\n▶ ${whoIs({ name, playerId, seat })} to move. The bot would play: ${text}    (search value ${signed(value)})`);
         steps.forEach((step) => console.log(`     ${step}`));
         await table.show(highlight);
       },

@@ -50,6 +50,8 @@ const zRoyal = z.object({
 
 const zPlayer = z.object({
   id: int,
+  /** The name shown at the table. For telling players apart on screen; nothing is decided by it. */
+  name: z.string().optional(),
   /** 1 once the game is won by this player. */
   score: int,
   /** 1 or 2, in turn order. */
