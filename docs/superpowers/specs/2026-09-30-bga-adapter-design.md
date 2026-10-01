@@ -182,7 +182,9 @@ and `pickAction` as the web client, so the agent on BGA is the agent that was me
 ### When it stops
 
 Unknown state, unmapped card, snapshot that fails the schema, legal-move disagreement, only `pass`
-legal, a refused call, expansion content. In every case: say exactly what was seen, save the
+legal, a refused call (or one BGA accepted that left the table unchanged), expansion content, a
+`play` move left half-done for 30 seconds, a page that cannot be read or is no longer the vetted
+table, and any error thrown inside the loop. In every case: say exactly what was seen, save the
 snapshot beside the results for a later fixture, ring the terminal bell, leave the browser open, and
 do nothing further on that table.
 
@@ -242,6 +244,11 @@ public source and confirmed on the operator's first run, with `capture`:
 3. that the live snapshot matches the shape in the published source.
 
 Until the first is confirmed the adapter refuses every table, which is the right way round.
+
+`play` has a gate of its own as well, `PLAY_VERIFIED`, because the page's action API is a fourth
+thing only a live table settles and confirming the mode check does nothing to confirm it. It stays
+closed — `play` refuses before it opens a browser — until `play` has been watched through one whole
+live friendly game, after the advised one the order of work puts first.
 
 ## Order of work
 

@@ -84,7 +84,9 @@ npm run bga -- report                                         # the rating the g
 ```
 
 The published network at a real table, in disclosed, unrated friendly games only — the adapter
-refuses anything else. `tools/bga/README.md` has the conditions and the rest.
+refuses anything else. As shipped it refuses **every** table: its friendly-mode check has to be
+calibrated against live tables first, by hand. `tools/bga/README.md` has the conditions, the
+calibration, and the rest.
 
 ## Deploying
 

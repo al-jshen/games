@@ -48,14 +48,21 @@ page's state is. The risk to the account is the account holder's.
 | --- | --- |
 | `bad-snapshot` | BGA's page no longer has the shape this reads. BGA changed something. |
 | `expansion` | The Counterfeiters expansion is on. Not supported. |
+| `spectator` | The signed-in account is not seated at this table. |
+| `not-our-turn` | A snapshot taken as our decision says the other seat is to act. |
 | `unknown-state` | The table sat in a state there is no translation for. |
+| `mid-action` | The table is in the middle of one of our two-part moves (a privilege, a reservation, a wild card). In `play`, it sat there for 30s: the second call never landed. Finish or cancel it by hand. |
+| `unmapped` | BGA named a colour, cell or card this has no word for. |
 | `inconsistent` | The snapshot cannot be a position of this game. |
-| `disagreement` | Our rules and BGA's allow different moves here. Includes being *stuck*: BGA forces a refill where our rules pass. |
-| `refused` | (`play`) BGA turned down a move. |
+| `disagreement` | Our rules and BGA's allow different moves here. Includes being *stuck*, where our rules can only pass, and BGA saying either seat is hoarding every gold and pearl, a rule our engine does not have. |
+| `refused` | (`play`) BGA turned down a move, or accepted one and the table did not change. Nothing is retried. |
+| `page-error` | The page could not be read — a reload failed — or the tab is no longer on the table that was vetted. Also any error thrown inside the adapter, with its message. |
 
 Every stop saves its snapshot to `data/bga/stops/`. If the stop was a bug in the translation, strip
-the names and ids from that snapshot, put it in
-`packages/bga-splendor-duel/test/fixtures/live/`, and `live.test.ts` will fail until it is fixed.
+the names and ids from that snapshot and keep it as a test fixture. The place for those,
+`packages/bga-splendor-duel/test/fixtures/live/`, and the test that reads them, `live.test.ts`, are
+created by the calibration (Task 11 of the plan, below); from then on a fixture there fails the
+test until the bug is fixed.
 
 ## The rating
 
