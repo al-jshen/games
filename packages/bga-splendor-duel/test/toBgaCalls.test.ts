@@ -16,6 +16,13 @@ import { bgaCardId, boardTokenId, snap } from './support/synth.js';
  * same tokens, same card, same payment, and nothing else.
  */
 
+/** The kinds of move whose calls differ: a wild purchase has a second call, a deck reservation names the deck. */
+function kindOf(action: SplendorAction): string {
+  if (action.t === 'purchase' && action.wildColor) return 'purchase-wild';
+  if (action.t === 'reserve' && action.from.t === 'deck') return 'reserve-deck';
+  return action.t;
+}
+
 describe('toBgaCalls', () => {
   const opening = setup({ seed: 'calls', seats: [0, 1], options: {} });
   const mover = opening.turn as 0 | 1;
@@ -84,12 +91,24 @@ describe('toBgaCalls', () => {
           if (call.then) expect((await table.pulse()).name).toBe(call.then);
         }
         expect(table.state).toEqual(expected.state);
-        kinds.add(action.t === 'purchase' && action.wildColor ? 'purchase-wild' : action.t);
+        kinds.add(kindOf(action));
         performed += 1;
       }
     }
     expect(performed).toBeGreaterThan(100);
-    for (const kind of ['takeTokens', 'usePrivilege', 'replenish', 'reserve', 'purchase', 'chooseRoyal', 'discard']) {
+    for (const kind of [
+      'takeTokens',
+      'usePrivilege',
+      'replenish',
+      'reserve',
+      'reserve-deck',
+      'purchase',
+      'purchase-wild',
+      'chooseMatchingToken',
+      'chooseSteal',
+      'chooseRoyal',
+      'discard',
+    ]) {
       expect(kinds.has(kind), `no ${kind} was performed; add a seed`).toBe(true);
     }
   });
