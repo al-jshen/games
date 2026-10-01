@@ -36,3 +36,20 @@ const WINDOWLESS = new Set(['watch', 'capture']);
 export function headlessAllowed(command) {
   return WINDOWLESS.has(command);
 }
+
+/**
+ * The search budget: simulations per move.
+ *
+ * 1000 by default, the setting the network was trained and measured at. Anything else is the
+ * caller's to choose, with no ceiling: more is stronger and slower, at roughly 0.7 ms a simulation,
+ * and how long a move is worth waiting for is not this tool's to decide. What is refused is a value
+ * that is not a count at all -- rather than rounding or clamping it into one nobody asked for.
+ */
+export function iterationsOf(flags) {
+  if (flags.iterations === undefined) return 1000;
+  const n = Number(flags.iterations);
+  if (String(flags.iterations).trim() === '' || !Number.isInteger(n) || n < 1) {
+    throw new Error(`--iterations must be a whole number of simulations, 1 or more; got "${flags.iterations}".`);
+  }
+  return n;
+}

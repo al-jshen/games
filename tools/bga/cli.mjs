@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { emptyMemory, parseSnapshot, stateKind } from '@games/bga-splendor-duel';
 import { makeAdvise } from './advise.mjs';
-import { headlessAllowed, parseArgs } from './args.mjs';
+import { headlessAllowed, iterationsOf, parseArgs } from './args.mjs';
 import { openBrowser } from './browser.mjs';
 import { explainSettings, explainSnapshot } from './explain.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
@@ -165,13 +165,6 @@ const NOTICE =
   'This is a friendly, unrated game. Good luck, and thank you for playing it.';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** The search budget, held to the range the web client's dial allows. */
-function iterationsOf(flags) {
-  const n = Number(flags.iterations ?? 1000);
-  if (!Number.isFinite(n)) throw new Error('--iterations must be a number.');
-  return Math.min(5000, Math.max(100, Math.round(n)));
-}
 
 async function confirmPosted() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { headlessAllowed, parseArgs } from '../args.mjs';
+import { headlessAllowed, iterationsOf, parseArgs } from '../args.mjs';
 
 describe('parseArgs', () => {
   it('reads a command and its --name value pairs', () => {
@@ -38,5 +38,24 @@ describe('headlessAllowed', () => {
   it('is not for the commands a person has to see the window for', () => {
     // `login`: you type in it. `advise`: you click in it. `play`: it is what you take over on a stop.
     for (const command of ['login', 'advise', 'play']) expect(headlessAllowed(command)).toBe(false);
+  });
+});
+
+describe('iterationsOf', () => {
+  it('is 1000 unless told otherwise: the setting the network was measured at', () => {
+    expect(iterationsOf({})).toBe(1000);
+  });
+
+  it('takes whatever is asked for, with no ceiling and no floor but one', () => {
+    expect(iterationsOf({ iterations: '5000' })).toBe(5000);
+    expect(iterationsOf({ iterations: '20000' })).toBe(20000);
+    expect(iterationsOf({ iterations: '250000' })).toBe(250000);
+    expect(iterationsOf({ iterations: '1' })).toBe(1);
+  });
+
+  it('refuses what is not a count of simulations, instead of quietly making it one', () => {
+    for (const bad of ['0', '-5', '2.5', 'lots', '']) {
+      expect(() => iterationsOf({ iterations: bad }), bad).toThrow(/--iterations/);
+    }
   });
 });
