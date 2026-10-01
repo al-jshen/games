@@ -6,3 +6,4 @@ export * from './memory.js';
 export * from './toView.js';
 export * from './locate.js';
 export * from './crosscheck.js';
+export * from './instruct.js';
