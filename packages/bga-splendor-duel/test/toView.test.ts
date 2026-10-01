@@ -1,5 +1,6 @@
 import {
   apply,
+  card,
   legalActions,
   legalActionsFromView,
   redactFor,
@@ -46,7 +47,11 @@ describe('toView', () => {
     const pendingSeen = new Set<string>();
     let checked = 0;
     let unrefilledSeen = 0;
-    for (const seed of ['toview-a', 'toview-b', 'toview-c']) {
+    let extraTurnDiscards = 0;
+    let royalSteals = 0;
+    // `toview-x556` is there for its one discard with an extra turn to follow, which is rare: the
+    // turn that grants the extra turn has to end with more than ten tokens.
+    for (const seed of ['toview-a', 'toview-b', 'toview-c', 'toview-x556']) {
       const memory: [Memory, Memory] = [emptyMemory(), emptyMemory()];
       walk(seed, 400, (state, before) => {
         if (state.stage === 'over') return;
@@ -69,6 +74,9 @@ describe('toView', () => {
           expect(moves(result.view)).toEqual(moves(expected));
           pendingSeen.add(state.pending?.k ?? 'none');
           if (unrefilled(state, before).length > 0) unrefilledSeen += 1;
+          // The two fields only memory can supply, each pinned to a position that needed it.
+          if (state.pending?.k === 'discard' && state.extraTurns > 0) extraTurnDiscards += 1;
+          if (state.pending?.k === 'steal' && state.pending.source === 'royal') royalSteals += 1;
           checked += 1;
         }
       });
@@ -76,6 +84,8 @@ describe('toView', () => {
     expect(checked).toBeGreaterThan(300);
     // And the timing difference was exercised, not just allowed for.
     expect(unrefilledSeen).toBeGreaterThan(5);
+    expect(extraTurnDiscards, 'no discard with an extra turn to follow was reached; add a seed').toBeGreaterThan(0);
+    expect(royalSteals, 'no steal granted by a royal was reached; add a seed').toBeGreaterThan(0);
     // The property is only as good as the states it visited.
     for (const kind of ['none', 'discard', 'royal', 'matchingToken', 'steal']) {
       expect(pendingSeen.has(kind), `no position with pending "${kind}" was reached; add a seed`).toBe(true);
@@ -96,6 +106,68 @@ describe('toView', () => {
     const result = toView(snapshot, remember(emptyMemory(), snapshot));
     if (!result.ok) throw new Error(result.refusal.detail);
     expect(result.view.players[opponent].reserved).toEqual([{ hidden: true }]);
+  });
+});
+
+/** The first position of a seeded game that satisfies `holds`, with its turn's starting position. */
+function firstWhere(seed: string, holds: (state: SplendorState) => boolean): { state: SplendorState; before: SplendorState | undefined } {
+  let found: { state: SplendorState; before: SplendorState | undefined } | undefined;
+  walk(seed, 400, (state, before) => {
+    if (!found && holds(state)) found = { state, before };
+  });
+  if (!found) throw new Error(`${seed} never reaches the position this test needs; change the seed`);
+  return found;
+}
+
+/** Translate a position with memory that starts at it: the adapter was started right there. */
+function startedAt({ state, before }: { state: SplendorState; before: SplendorState | undefined }) {
+  const viewer = state.turn as 0 | 1;
+  const snapshot = snap(state, viewer, before);
+  const result = toView(snapshot, remember(emptyMemory(), snapshot));
+  if (!result.ok) throw new Error(`${result.refusal.reason}: ${result.refusal.detail}`);
+  return result;
+}
+
+describe('toView, started mid-turn', () => {
+  const holds = (state: SplendorState, ability: 'stealToken') => {
+    const me = state.players[state.turn as 0 | 1];
+    const owned = [...me.stacks.flatMap((s) => s.cardIds), ...me.colorless];
+    return owned.some((id) => card(id).abilities.includes(ability)) && me.royals.some((id) => card(id).abilities.includes(ability));
+  };
+
+  it('at a discard, assumes no extra turn follows, and says so', () => {
+    const result = startedAt(firstWhere('toview-a', (s) => s.pending?.k === 'discard'));
+    expect(result.view.pending?.k).toBe('discard');
+    expect(result.view.extraTurns).toBe(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/cannot tell whether an extra turn follows/);
+  });
+
+  it('at a steal, holding both a card and a royal that grant one, assumes the card, and says so', () => {
+    const result = startedAt(firstWhere('toview-s4', (s) => s.pending?.k === 'steal' && holds(s, 'stealToken')));
+    expect(result.view.pending).toMatchObject({ k: 'steal', source: 'card' });
+    expect(result.view.stage).toBe('abilities');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/cannot tell whether a card or a royal granted this steal/);
+  });
+
+  it('after our own replenish, recognises it from the privileges BGA stops offering', () => {
+    const position = firstWhere(
+      'toview-e',
+      (s) => s.stage === 'optional' && s.replenishedThisTurn && s.players[s.turn as 0 | 1].privileges > 0,
+    );
+    const viewer = position.state.turn as 0 | 1;
+    const snapshot = snap(position.state, viewer, position.before);
+    const memory = remember(emptyMemory(), snapshot);
+    // Memory did not see the replenish happen, so this is the fallback and nothing else.
+    expect(memory.replenished).toBe(false);
+    const result = toView(snapshot, memory);
+    if (!result.ok) throw new Error(result.refusal.detail);
+    expect(result.view.replenishedThisTurn).toBe(true);
+    expect(result.warnings).toEqual([]);
+    // And the moves on offer are ours exactly: no replenish, and no privilege.
+    const moves = (view: SplendorView) => legalActionsFromView(view, viewer).actions.map((a) => JSON.stringify(a)).sort();
+    expect(moves(result.view)).toEqual(moves(viewOf(position.state, viewer, position.before)));
   });
 });
 
