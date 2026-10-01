@@ -5,7 +5,7 @@
  */
 
 /** Flags that are switches, taking no value. */
-const SWITCHES = new Set(['headless']);
+const SWITCHES = new Set(['headless', 'trace']);
 
 export function parseArgs(argv) {
   const [command, ...rest] = argv;

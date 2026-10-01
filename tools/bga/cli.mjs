@@ -9,6 +9,7 @@
  *   npm run bga -- watch   --table <url> [--iterations N]   a game you are not in: what the bot would play
  *
  * `capture` and `watch` only read, and take `--headless` to run with no window.
+ * `advise`, `play` and `watch` take `--trace` to print every reload and every change the page reports.
  *   npm run bga -- report                                   the rating the results so far support
  *
  * See README.md beside this file for the conditions this is used under. They are not optional.
@@ -48,7 +49,34 @@ function save(folder, name, value) {
   return file;
 }
 
-async function open(url, { log = () => {}, headless = false } = {}) {
+/**
+ * The same table, saying what the page tells it as it goes: every reload, and every time the page's
+ * own idea of the game's state changes. For when the tool and the table disagree about whose turn it
+ * is, and the question is which of them is behind.
+ */
+function traced(table) {
+  const started = Date.now();
+  const log = (line) => console.log(`  [trace ${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s] ${line}`);
+  let last = null;
+  return {
+    ...table,
+    async snapshot() {
+      log('reloading the page');
+      const raw = await table.snapshot();
+      log(`loaded: state "${raw?.gamestate?.name}", player ${raw?.gamestate?.active_player} to act`);
+      return raw;
+    },
+    async pulse() {
+      const pulse = await table.pulse();
+      const now = `state "${pulse.name}", player ${pulse.active} to act`;
+      if (now !== last) log(`the page says: ${now}`);
+      last = now;
+      return pulse;
+    },
+  };
+}
+
+async function open(url, { log = () => {}, headless = false, trace = false } = {}) {
   const tableId = tableIdOf(url);
   log(`opening a browser with the saved profile (${PROFILE})${headless ? ', with no window' : ''}`);
   const context = await openBrowser(PROFILE, { headless });
@@ -56,7 +84,8 @@ async function open(url, { log = () => {}, headless = false } = {}) {
   log(`loading ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   log(`the browser is on ${page.url()}, titled "${await page.title().catch(() => '?')}"`);
-  return { context, tableId, table: makeTable(page, tableId, { log }) };
+  const table = makeTable(page, tableId, { log });
+  return { context, tableId, table: trace ? traced(table) : table };
 }
 
 async function login() {
@@ -168,7 +197,7 @@ async function sit(mode, flags, strategy, { midActionPatienceMs = Infinity } = {
   const url = need(flags, 'table');
   const iterations = iterationsOf(flags);
   const engine = loadPublished(PUBLISHED);
-  const { context, tableId, table } = await open(url);
+  const { context, tableId, table } = await open(url, { trace: flags.trace === true });
 
   // Until the loop starts nothing has been played, so any failure here closes the browser. Once it
   // has started, nothing below closes it: a game is in progress and the operator finishes it there.
@@ -293,7 +322,7 @@ async function watch(flags) {
   const url = need(flags, 'table');
   const iterations = iterationsOf(flags);
   const engine = loadPublished(PUBLISHED);
-  const { context, tableId, table } = await open(url, { headless: flags.headless === true });
+  const { context, tableId, table } = await open(url, { headless: flags.headless === true, trace: flags.trace === true });
   try {
     console.log(`\nWatching table ${tableId}:`);
     const first = await introduce({ table, say: (line) => console.log(line) });

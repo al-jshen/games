@@ -16,6 +16,11 @@ describe('parseArgs', () => {
     expect(parseArgs(['watch', '--headless', '--table', 'u']).flags).toEqual({ table: 'u', headless: true });
   });
 
+  it('takes --trace as a switch too, for any command', () => {
+    expect(parseArgs(['advise', '--trace', '--table', 'u']).flags).toEqual({ table: 'u', trace: true });
+    expect(parseArgs(['watch', '--table', 'u', '--headless', '--trace']).flags).toEqual({ table: 'u', headless: true, trace: true });
+  });
+
   it('still refuses a flag with no value, or a value with no flag', () => {
     expect(() => parseArgs(['watch', '--table'])).toThrow(/Expected "--name value"/);
     expect(() => parseArgs(['watch', 'stray'])).toThrow(/Expected "--name value"/);

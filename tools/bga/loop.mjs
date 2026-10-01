@@ -89,6 +89,8 @@ async function follow(
     pollMs = 500,
     patienceMs = 30_000,
     midActionPatienceMs = Infinity,
+    refreshMs = 5_000,
+    refreshMaxMs = 30_000,
   },
   counts,
 ) {
@@ -131,12 +133,38 @@ async function follow(
     return kind === 'mid-action' ? 'wait' : 'unknown';
   };
 
-  /** Poll until `holds(pulse)` stops being true. Resolves false if `timeoutMs` passes first. */
-  const waitWhile = async (holds, timeoutMs = Infinity) => {
+  /**
+   * Poll until `holds(pulse)` stops being true. Resolves false if `timeoutMs` passes first.
+   *
+   * With `refresh`, a page that has said nothing new for a while is reloaded, and asked again.
+   * A pulse is the page's own idea of where the game is, and the page can be wrong: a move made
+   * while it was reloading is in neither the state it loaded nor the notifications it then listens
+   * for, and BGA's page only notices the gap when the *next* move arrives. Seen live, as a `watch`
+   * left suggesting a move for a player whose turn had ended. Since every decision here begins with
+   * a reload, that window is opened by us, and a quick second move lands in it.
+   *
+   * So a quiet page is not taken at its word for long: after `refreshMs`, then twice as long each
+   * time up to `refreshMaxMs`, it is reloaded. Only where a reload disturbs nobody -- from the
+   * stands, and while waiting on an opponent -- and never while a person at our seat is choosing
+   * what to click.
+   */
+  const waitWhile = async (holds, timeoutMs = Infinity, { refresh = false } = {}) => {
+    let quiet = 0;
+    let due = refreshMs;
     for (let waited = 0; ; waited += pollMs) {
-      if (!holds(await table.pulse())) return true;
+      const pulse = await table.pulse();
+      if (!holds(pulse)) return true;
       if (waited >= timeoutMs) return false;
+      if (refresh && quiet >= due) {
+        await table.snapshot();
+        const fresh = await table.pulse();
+        if (fingerprint(fresh) !== fingerprint(pulse)) say('  (the page had fallen behind the table; a reload caught it up)');
+        if (!holds(fresh)) return true;
+        quiet = 0;
+        due = Math.min(due * 2, refreshMaxMs);
+      }
       await sleep(pollMs);
+      quiet += pollMs;
     }
   };
 
@@ -176,7 +204,7 @@ async function follow(
     if (onDoubt === 'stop') return stopped(refusal);
     say(`  nothing to suggest here (${refusal.reason}): ${refusal.detail}`);
     if (position === null) await sleep(pollMs);
-    else await waitWhile((pulse) => fingerprint(pulse) === position);
+    else await waitWhile((pulse) => fingerprint(pulse) === position, Infinity, { refresh: true });
     return null;
   };
 
@@ -223,7 +251,7 @@ async function follow(
     const position = fingerprint(before);
     const mover = snapshot.gamestate.active_player;
     if (!memories.has(mover)) {
-      await waitWhile((p) => where(p) === 'theirs');
+      await waitWhile((p) => where(p) === 'theirs', Infinity, { refresh: true });
       continue;
     }
     // Reloaded into the middle of an action, or into a state with no name: `settle` waits those out.
@@ -264,7 +292,9 @@ async function follow(
       at: at2,
       before,
       pulse: () => table.pulse(),
-      waitWhile,
+      // From the stands, the wait for the table to move may reload a quiet page. At our own seat
+      // the person the suggestion is for is using that page, so it is left alone.
+      waitWhile: (holds, timeoutMs) => waitWhile(holds, timeoutMs, { refresh: spectating }),
     });
     if (!outcome.ok) return stopped(outcome.refusal);
   }

@@ -64,6 +64,26 @@ pieces on the page, while the position is still on the table. Two things to know
 
 Nothing is recorded in the results log: a watched game is not a game the network played.
 
+### Keeping up with the table
+
+Between reloads the tool follows the game through the page's own state, and the page can fall
+behind: a move made while it was reloading reaches it only when the *next* move does. Seen live as a
+`watch` still suggesting a move for a player whose turn had ended, after a privilege and a quick
+second move. So a page that has been quiet for five seconds is reloaded, then after ten, twenty and
+every thirty; when a reload finds the table had moved on, it says so:
+
+```
+  (the page had fallen behind the table; a reload caught it up)
+```
+
+That happens from the stands and while waiting on an opponent, where a reload disturbs nobody, and
+never on your own turn in `advise`, where you are using the page. One suggestion about the position
+the page was stuck on can still appear first; the page said so, and nothing could know better.
+
+`--trace`, on `watch`, `advise` and `play`, prints every reload and every change of state the page
+reports, with times. It is the thing to send when the tool and the table disagree about whose turn
+it is.
+
 ### What a working `watch` says about `advise`
 
 `watch`, `advise` and `play` are one loop (`loop.mjs`) with three settings, and all three begin with
