@@ -11,15 +11,34 @@ import { fitRating } from './rating.mjs';
 
 export function appendResult(file, row) {
   mkdirSync(dirname(file), { recursive: true });
-  appendFileSync(file, `${JSON.stringify(row)}\n`);
+  // After a torn write the file does not end in a newline; start a fresh line rather than glue this
+  // row onto the torn one.
+  const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const torn = before !== '' && !before.endsWith('\n');
+  appendFileSync(file, `${torn ? '\n' : ''}${JSON.stringify(row)}\n`);
 }
 
+/**
+ * Every row, in order. A damaged last line is what a kill in the middle of a write leaves, and is
+ * skipped. A damaged line anywhere else is not something this program writes, so it is an error,
+ * with the place to look.
+ */
 export function readResults(file) {
   if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8')
+  const lines = readFileSync(file, 'utf8')
     .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => JSON.parse(line));
+    .map((text, i) => ({ text, number: i + 1 }))
+    .filter(({ text }) => text.trim() !== '');
+  const rows = [];
+  for (const [i, { text, number }] of lines.entries()) {
+    try {
+      rows.push(JSON.parse(text));
+    } catch (error) {
+      if (i === lines.length - 1) break;
+      throw new Error(`${file}, line ${number}, is not a result row: ${error.message}`);
+    }
+  }
+  return rows;
 }
 
 /** BGA's `endReasons`, from `getEndReasons` in thoun/splendorduel. */

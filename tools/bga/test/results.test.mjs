@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -35,6 +35,32 @@ describe('the results log', () => {
     appendResult(file, row());
     appendResult(file, row({ table: '2', result: 'loss' }));
     expect(readResults(file).map((r) => [r.table, r.result])).toEqual([['1', 'win'], ['2', 'loss']]);
+  });
+
+  it('skips a torn last line, as a write cut short by a kill leaves it', () => {
+    const file = join(dir, 'results.jsonl');
+    appendResult(file, row());
+    appendResult(file, row({ table: '2' }));
+    appendFileSync(file, '{"table":"3","at":"2026-10');
+    expect(readResults(file).map((r) => r.table)).toEqual(['1', '2']);
+  });
+
+  it('starts a fresh line after a torn one, so the next game is not glued onto it', () => {
+    const file = join(dir, 'results.jsonl');
+    appendResult(file, row());
+    appendFileSync(file, '{"table":"2","at":"2026-10');
+    appendResult(file, row({ table: '3' }));
+    // The torn row is now an earlier line: an error, but one that names it, and row 3 is intact.
+    expect(() => readResults(file)).toThrow(/line 2\b/);
+  });
+
+  it('refuses a damaged line anywhere else, naming the file and the line', () => {
+    const file = join(dir, 'results.jsonl');
+    appendResult(file, row());
+    appendFileSync(file, 'not json\n');
+    appendResult(file, row({ table: '3' }));
+    expect(() => readResults(file)).toThrow(file);
+    expect(() => readResults(file)).toThrow(/line 2\b/);
   });
 
   it('reads who won from the final snapshot', () => {
