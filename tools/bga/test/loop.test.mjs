@@ -6,6 +6,7 @@ import { FakeTable } from '../../../packages/bga-splendor-duel/test/support/fake
 import { pick } from '../../../packages/bga-splendor-duel/test/support/play.ts';
 import { makeAdvise } from '../advise.mjs';
 import { runTable } from '../loop.mjs';
+import { makePlay } from '../play.mjs';
 import { resultOf } from '../results.mjs';
 
 /**
@@ -104,5 +105,50 @@ describe('runTable, stopping', () => {
     // Our seat may not be first to move; the opponent plays until it is, then the strategy refuses.
     const result = await runTable({ table, brain: randomBrain('loop-refused'), act: async () => ({ ok: false, refusal }), memory: emptyMemory(), ...quiet });
     expect(result).toMatchObject({ outcome: 'stopped', refusal, moves: 1 });
+  });
+});
+
+describe('runTable, playing', () => {
+  it('plays a whole game through BGA’s own calls, from either seat', async () => {
+    for (const [seed, viewer] of [['play-a', 0], ['play-b', 1]]) {
+      const table = new FakeTable(seed, viewer);
+      const said = [];
+      const act = makePlay({ perform: (call) => table.perform(call), say: (line) => said.push(line) });
+      const result = await runTable({ table, brain: randomBrain(seed), act, memory: emptyMemory(), ...quiet });
+
+      expect(endedProperly(result), JSON.stringify(result.refusal)).toBe(true);
+      expect(result.moves).toBeGreaterThan(10);
+      expect(said).toHaveLength(result.moves);
+      if (result.outcome === 'finished') expect(table.state.stage).toBe('over');
+    }
+  });
+
+  it('stops, and says what BGA said, when a call is refused', async () => {
+    const table = new FakeTable('play-refused', 0);
+    const act = makePlay({
+      perform: async () => {
+        throw new Error('This move is not authorized now');
+      },
+      say: () => {},
+    });
+    const result = await runTable({ table, brain: randomBrain('play-refused'), act, memory: emptyMemory(), ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('refused');
+    expect(result.refusal.detail).toContain('This move is not authorized now');
+    expect(result.moves).toBe(1);
+  });
+
+  it('stops when the table never reaches the state the second call needs', async () => {
+    const table = new FakeTable('play-stuck', 0);
+    // Accept every call and change nothing: the table never moves into `reserveCard` or the like.
+    const act = makePlay({ perform: async () => {}, say: () => {}, actTimeoutMs: 1000 });
+    const twoStep = (view, seat) => {
+      const { actions } = legalActionsFromView(view, seat);
+      return { action: actions.find((a) => a.t === 'reserve') ?? actions[0], value: 0 };
+    };
+    const result = await runTable({ table, brain: twoStep, act, memory: emptyMemory(), pollMs: 500, ...quiet });
+    expect(result.outcome).toBe('stopped');
+    expect(result.refusal.reason).toBe('refused');
+    expect(result.refusal.detail).toMatch(/reserveCard/);
   });
 });

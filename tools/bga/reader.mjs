@@ -99,6 +99,32 @@ export function makeTable(page, tableId) {
     },
 
     /**
+     * Send one of the game's own actions through the page, exactly as a click would.
+     *
+     * UNVERIFIED until the live step of Task 12: which of the two action APIs the page exposes on
+     * `gameui`. Both are tried, the current one first. A refusal from BGA rejects here with BGA's
+     * own message.
+     */
+    async perform(call) {
+      await page.evaluate(async ({ name, args }) => {
+        const current = gameui.bga?.actions;
+        const send =
+          current && typeof current.performAction === 'function'
+            ? (n, a) => current.performAction(n, a)
+            : typeof gameui.bgaPerformAction === 'function'
+              ? (n, a) => gameui.bgaPerformAction(n, a)
+              : null;
+        if (!send) throw new Error('This page exposes no action API the adapter knows.');
+        try {
+          await send(name, args);
+        } catch (error) {
+          // BGA rejects with a string or a `{ message }` object, neither of which survives the trip to node.
+          throw new Error(typeof error === 'string' ? error : (error?.message ?? JSON.stringify(error)));
+        }
+      }, { name: call.name, args: call.args });
+    },
+
+    /**
      * What decides whether we may sit here, and what the opponent is rated.
      *
      * UNVERIFIED until Task 11: that `tableinfos` is how a table's settings are fetched, and that

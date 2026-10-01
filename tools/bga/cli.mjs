@@ -5,6 +5,7 @@
  *   npm run bga -- login                                    sign in to BGA, once, by hand
  *   npm run bga -- capture --table <url>                    save what the adapter sees; changes nothing
  *   npm run bga -- advise  --table <url> [--iterations N]   tell the operator what to play
+ *   npm run bga -- play    --table <url> [--iterations N]   play the moves itself
  *   npm run bga -- report                                   the rating the results so far support
  *
  * See README.md beside this file for the conditions this is used under. They are not optional.
@@ -18,6 +19,7 @@ import { makeAdvise } from './advise.mjs';
 import { openBrowser } from './browser.mjs';
 import { loadPublished, makeBrain } from './engine.mjs';
 import { runTable } from './loop.mjs';
+import { makePlay } from './play.mjs';
 import { guard, tableMode } from './mode.mjs';
 import { DATA, PROFILE, PUBLISHED, RESULTS } from './paths.mjs';
 import { makeTable, tableIdOf } from './reader.mjs';
@@ -217,6 +219,9 @@ const advise = (flags) =>
     }),
   );
 
+const play = (flags) =>
+  sit('play', flags, (table) => makePlay({ perform: (call) => table.perform(call), say: (line) => console.log(`\n${line}`) }));
+
 async function main() {
   const { command, flags } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -226,10 +231,12 @@ async function main() {
       return capture(flags);
     case 'advise':
       return advise(flags);
+    case 'play':
+      return play(flags);
     case 'report':
       return console.log(report(readResults(RESULTS)));
     default:
-      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | report>');
+      console.log('Usage: npm run bga -- <login | capture --table <url> | advise --table <url> [--iterations N] | play --table <url> [--iterations N] | report>');
       process.exitCode = command ? 2 : 0;
   }
 }
