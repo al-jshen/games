@@ -131,3 +131,20 @@ describe('cards', () => {
     expect(royalIdFromBga(5)).toBeNull();
   });
 });
+
+describe('facts the translation leans on', () => {
+  it('no card that grants an extra turn has crowns, or an ability that asks for a choice', () => {
+    // `toView` sets `extraTurns` to zero everywhere but a discard. That is right only because a
+    // "play again" card can never lead, in the same turn, to a royal being claimed (it has no
+    // crowns) or to a token being taken or stolen (it has neither ability) -- the decisions between
+    // the purchase and the discard. A wild bonus is no decision: it is placed in the purchase itself.
+    const again = CARD_DEFS.filter((c) => c.abilities.includes('playAgain'));
+    expect(again.length).toBeGreaterThan(0);
+    for (const def of again) {
+      expect(def.crowns, def.id).toBe(0);
+      expect(def.abilities, def.id).not.toContain('takeMatchingToken');
+      expect(def.abilities, def.id).not.toContain('stealToken');
+    }
+  });
+});
+
